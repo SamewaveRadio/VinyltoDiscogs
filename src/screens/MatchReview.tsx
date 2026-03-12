@@ -1,14 +1,48 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Loader2, ExternalLink, ChevronDown, ChevronUp, CreditCard as Edit2, AlertTriangle, Plus } from 'lucide-react';
+import {
+  ArrowLeft, CheckCircle2, Loader2, ExternalLink,
+  ChevronDown, ChevronUp, AlertTriangle, Plus, RefreshCw, Eye
+} from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { VinylRecord, DiscogsCandidate, RecordPhoto } from '../types';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
+type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings' | 'success';
 
 interface MatchReviewProps {
   onNavigate: (screen: Screen, recordId?: string) => void;
   recordId: string | null;
+}
+
+type ConfidenceTier = 'strong' | 'review' | 'low';
+
+function getConfidenceTier(score: number): ConfidenceTier {
+  if (score >= 80) return 'strong';
+  if (score >= 50) return 'review';
+  return 'low';
+}
+
+function ConfidenceBadge({ score }: { score: number }) {
+  const tier = getConfidenceTier(score);
+  if (tier === 'strong') {
+    return (
+      <span className="text-[9px] font-semibold uppercase tracking-widest text-black border border-black px-1.5 py-0.5">
+        Strong Match
+      </span>
+    );
+  }
+  if (tier === 'review') {
+    return (
+      <span className="text-[9px] font-semibold uppercase tracking-widest text-neutral-500 border border-neutral-400 px-1.5 py-0.5">
+        Review Recommended
+      </span>
+    );
+  }
+  return (
+    <span className="text-[9px] font-semibold uppercase tracking-widest text-neutral-400 border border-neutral-300 px-1.5 py-0.5">
+      Low Confidence
+    </span>
+  );
 }
 
 export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) {
@@ -22,10 +56,15 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
   const [activePhotoUrl, setActivePhotoUrl] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
-  const [addSuccess, setAddSuccess] = useState(false);
+  const [addedRecord, setAddedRecord] = useState<VinylRecord | null>(null);
+  const [addedCandidate, setAddedCandidate] = useState<DiscogsCandidate | null>(null);
+
   const [editingMeta, setEditingMeta] = useState(false);
   const [metaEdits, setMetaEdits] = useState({ artist: '', title: '', label: '', catalog_number: '', year: '' });
-  const [savingMeta, setSavingMeta] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const [showLowConfWarning, setShowLowConfWarning] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -50,8 +89,11 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
   const openRecord = async (record: VinylRecord) => {
     setSelectedRecord(record);
     setAddError(null);
-    setAddSuccess(false);
+    setAddedRecord(null);
+    setAddedCandidate(null);
     setEditingMeta(false);
+    setRetryError(null);
+    setShowLowConfWarning(false);
     setMetaEdits({
       artist: record.artist ?? '',
       title: record.title ?? '',
@@ -71,7 +113,12 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
     if (ph && ph.length > 0) setActivePhotoUrl(ph[0].file_url);
 
     const preSelected = candidateList.find(c => c.is_selected);
-    setChosenCandidateId(preSelected?.id ?? candidateList[0]?.id ?? null);
+    const topCandidate = preSelected ?? candidateList[0] ?? null;
+    setChosenCandidateId(topCandidate?.id ?? null);
+
+    if (topCandidate && getConfidenceTier(topCandidate.score) === 'low') {
+      setShowLowConfWarning(true);
+    }
   };
 
   const handleAddToDiscogs = async () => {
@@ -106,16 +153,10 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
       return;
     }
 
-    setAddSuccess(true);
     setAdding(false);
+    setAddedRecord(selectedRecord);
+    setAddedCandidate(candidate);
     setRecords(prev => prev.filter(r => r.id !== selectedRecord.id));
-
-    setTimeout(() => {
-      setSelectedRecord(null);
-      setCandidates([]);
-      setPhotos([]);
-      onNavigate('dashboard');
-    }, 1500);
   };
 
   const handleConfirmOnly = async () => {
@@ -132,9 +173,9 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
       selected_release_score: candidate.score,
     }).eq('id', selectedRecord.id);
 
+    setAddedRecord(selectedRecord);
+    setAddedCandidate(candidate);
     setRecords(prev => prev.filter(r => r.id !== selectedRecord.id));
-    setSelectedRecord(null);
-    onNavigate('dashboard');
   };
 
   const handleSendToReview = async () => {
@@ -145,27 +186,68 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
     onNavigate('needs-review', selectedRecord.id);
   };
 
-  const handleSaveMeta = async () => {
+  const handleRetrySearch = async () => {
     if (!selectedRecord) return;
-    setSavingMeta(true);
-    const year = metaEdits.year ? parseInt(metaEdits.year, 10) : null;
-    await supabase.from('records').update({
+    setRetrying(true);
+    setRetryError(null);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/search-discogs`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`,
+        'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({
+        record_id: selectedRecord.id,
+        artist: metaEdits.artist || null,
+        title: metaEdits.title || null,
+        label: metaEdits.label || null,
+        catalog_number: metaEdits.catalog_number || null,
+        year: metaEdits.year || null,
+      }),
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      setRetryError(result.error ?? 'Search failed.');
+      setRetrying(false);
+      return;
+    }
+
+    const yearNum = metaEdits.year ? parseInt(metaEdits.year, 10) : null;
+    const updatedRecord: VinylRecord = {
+      ...selectedRecord,
       artist: metaEdits.artist || null,
       title: metaEdits.title || null,
       label: metaEdits.label || null,
       catalog_number: metaEdits.catalog_number || null,
-      year: year && !isNaN(year) ? year : null,
-    }).eq('id', selectedRecord.id);
-    setSelectedRecord(prev => prev ? {
-      ...prev,
-      artist: metaEdits.artist || null,
-      title: metaEdits.title || null,
-      label: metaEdits.label || null,
-      catalog_number: metaEdits.catalog_number || null,
-      year: year && !isNaN(year) ? year : null,
-    } : prev);
-    setSavingMeta(false);
+      year: yearNum && !isNaN(yearNum) ? yearNum : null,
+      status: result.status,
+    };
+
+    const { data: newCands } = await supabase
+      .from('discogs_candidates')
+      .select('*')
+      .eq('record_id', selectedRecord.id)
+      .order('score', { ascending: false });
+
+    const candidateList = newCands ?? [];
+    setCandidates(candidateList);
+    setSelectedRecord(updatedRecord);
     setEditingMeta(false);
+    setRetrying(false);
+    setShowLowConfWarning(false);
+
+    const top = candidateList[0] ?? null;
+    setChosenCandidateId(top?.id ?? null);
+    if (top && getConfidenceTier(top.score) === 'low') {
+      setShowLowConfWarning(true);
+    }
   };
 
   if (loading) {
@@ -173,6 +255,29 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-4 h-4 text-neutral-400 animate-spin" />
       </div>
+    );
+  }
+
+  if (addedRecord && addedCandidate) {
+    return (
+      <SuccessView
+        record={addedRecord}
+        candidate={addedCandidate}
+        onScanNext={() => {
+          setAddedRecord(null);
+          setAddedCandidate(null);
+          setSelectedRecord(null);
+          setCandidates([]);
+          setPhotos([]);
+          onNavigate('upload');
+        }}
+        onBackToQueue={() => {
+          setAddedRecord(null);
+          setAddedCandidate(null);
+          setSelectedRecord(null);
+          onNavigate('dashboard');
+        }}
+      />
     );
   }
 
@@ -196,7 +301,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[1fr_120px_100px_80px_80px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
+            <div className="grid grid-cols-[1fr_120px_100px_70px_130px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Artist / Title</p>
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Label</p>
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Cat No.</p>
@@ -207,7 +312,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
               <div
                 key={record.id}
                 onClick={() => openRecord(record)}
-                className="grid grid-cols-[1fr_120px_100px_80px_80px] items-center px-8 py-3 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 transition-colors"
+                className="grid grid-cols-[1fr_120px_100px_70px_130px] items-center px-8 py-3 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 transition-colors"
               >
                 <div className="min-w-0 pr-4">
                   <div className="flex items-baseline gap-2">
@@ -222,10 +327,8 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
                 <div className="text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '—'}</div>
                 <div className="text-[11px] text-neutral-500">{record.year ?? '—'}</div>
                 <div>
-                  {record.confidence !== null && (
-                    <span className={`text-[11px] font-medium ${record.confidence >= 80 ? 'text-black' : record.confidence >= 50 ? 'text-neutral-500' : 'text-neutral-400'}`}>
-                      {record.confidence}%
-                    </span>
+                  {record.confidence !== null && record.confidence !== undefined && (
+                    <ConfidenceBadge score={record.confidence} />
                   )}
                 </div>
               </div>
@@ -241,10 +344,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
   return (
     <div className="min-h-screen flex flex-col">
       <div className="border-b border-black px-8 py-4 flex items-center gap-4">
-        <button
-          onClick={() => setSelectedRecord(null)}
-          className="text-neutral-400 hover:text-black transition-colors"
-        >
+        <button onClick={() => setSelectedRecord(null)} className="text-neutral-400 hover:text-black transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-baseline gap-4 min-w-0 flex-1">
@@ -270,21 +370,36 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
           </button>
           <button
             onClick={handleAddToDiscogs}
-            disabled={!chosenCandidate || adding || addSuccess}
+            disabled={!chosenCandidate || adding}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {adding ? <Loader2 className="w-3 h-3 animate-spin" /> :
-             addSuccess ? <CheckCircle2 className="w-3 h-3" /> :
-             <Plus className="w-3 h-3" />}
-            {addSuccess ? 'Added!' : 'Add to Discogs'}
+            {adding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+            Add to Discogs
           </button>
         </div>
       </div>
 
       {addError && (
         <div className="border-b border-black px-8 py-2 bg-neutral-50 flex items-center gap-2">
-          <XCircle className="w-3 h-3 text-black shrink-0" />
+          <XCircleIcon className="w-3 h-3 text-black shrink-0" />
           <p className="text-[10px] text-black">{addError}</p>
+        </div>
+      )}
+
+      {showLowConfWarning && (
+        <div className="border-b border-neutral-300 px-8 py-2 bg-neutral-50 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-3 h-3 text-neutral-500 shrink-0" />
+            <p className="text-[10px] text-neutral-600">
+              Top match has low confidence. Consider editing metadata and retrying the search.
+            </p>
+          </div>
+          <button
+            onClick={() => setShowLowConfWarning(false)}
+            className="text-neutral-400 hover:text-black text-[9px] uppercase tracking-widest ml-4 shrink-0"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -323,34 +438,49 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
             <div className="flex items-center justify-between mb-3">
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Extracted Metadata</p>
               <button
-                onClick={() => setEditingMeta(!editingMeta)}
-                className="text-neutral-400 hover:text-black transition-colors"
+                onClick={() => { setEditingMeta(!editingMeta); setRetryError(null); }}
+                className="text-[9px] uppercase tracking-widest text-neutral-400 hover:text-black transition-colors"
               >
-                <Edit2 className="w-3 h-3" />
+                {editingMeta ? 'Cancel' : 'Edit'}
               </button>
             </div>
 
             {editingMeta ? (
-              <div className="space-y-0 border border-black mb-3">
-                {[
-                  { key: 'artist', label: 'Artist' },
-                  { key: 'title', label: 'Title' },
-                  { key: 'label', label: 'Label' },
-                  { key: 'catalog_number', label: 'Cat No.' },
-                  { key: 'year', label: 'Year' },
-                ].map(({ key, label }, i) => (
-                  <div key={key} className={`flex items-center ${i < 4 ? 'border-b border-neutral-200' : ''}`}>
-                    <div className="w-16 px-2 py-1.5 border-r border-neutral-200 bg-neutral-50 shrink-0">
-                      <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">{label}</p>
+              <div className="space-y-0">
+                <div className="border border-black mb-2">
+                  {[
+                    { key: 'artist', label: 'Artist' },
+                    { key: 'title', label: 'Title' },
+                    { key: 'label', label: 'Label' },
+                    { key: 'catalog_number', label: 'Cat No.' },
+                    { key: 'year', label: 'Year' },
+                  ].map(({ key, label }, i) => (
+                    <div key={key} className={`flex items-center ${i < 4 ? 'border-b border-neutral-200' : ''}`}>
+                      <div className="w-16 px-2 py-1.5 border-r border-neutral-200 bg-neutral-50 shrink-0">
+                        <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">{label}</p>
+                      </div>
+                      <input
+                        type={key === 'year' ? 'number' : 'text'}
+                        value={metaEdits[key as keyof typeof metaEdits]}
+                        onChange={(e) => setMetaEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                        className="flex-1 px-2 py-1.5 text-[11px] text-black bg-white focus:outline-none placeholder:text-neutral-300"
+                      />
                     </div>
-                    <input
-                      type={key === 'year' ? 'number' : 'text'}
-                      value={metaEdits[key as keyof typeof metaEdits]}
-                      onChange={(e) => setMetaEdits(prev => ({ ...prev, [key]: e.target.value }))}
-                      className="flex-1 px-2 py-1.5 text-[11px] text-black bg-white focus:outline-none placeholder:text-neutral-300"
-                    />
-                  </div>
-                ))}
+                  ))}
+                </div>
+
+                {retryError && (
+                  <p className="text-[9px] text-neutral-500 mb-2">{retryError}</p>
+                )}
+
+                <button
+                  onClick={handleRetrySearch}
+                  disabled={retrying}
+                  className="w-full flex items-center justify-center gap-1.5 py-1.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors border border-black"
+                >
+                  {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  {retrying ? 'Searching...' : 'Retry Discogs Search'}
+                </button>
               </div>
             ) : (
               <div className="space-y-2">
@@ -361,37 +491,16 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
                   { label: 'Cat No.', value: selectedRecord.catalog_number },
                   { label: 'Year', value: selectedRecord.year?.toString() },
                 ].map(({ label, value }) => (
-                  <div key={label} className="grid grid-cols-[48px_1fr] gap-2 items-baseline">
+                  <div key={label} className="grid grid-cols-[52px_1fr] gap-2 items-baseline">
                     <span className="text-[9px] uppercase tracking-wider text-neutral-400">{label}</span>
                     <span className="text-[11px] text-black font-medium truncate">{value ?? '—'}</span>
                   </div>
                 ))}
-                {selectedRecord.confidence !== null && (
-                  <div className="grid grid-cols-[48px_1fr] gap-2 items-baseline pt-2 border-t border-neutral-100">
-                    <span className="text-[9px] uppercase tracking-wider text-neutral-400">Conf.</span>
-                    <span className={`text-[11px] font-semibold ${selectedRecord.confidence >= 80 ? 'text-black' : selectedRecord.confidence >= 50 ? 'text-neutral-500' : 'text-neutral-400'}`}>
-                      {selectedRecord.confidence}%
-                    </span>
+                {selectedRecord.confidence !== null && selectedRecord.confidence !== undefined && (
+                  <div className="pt-2 border-t border-neutral-100">
+                    <ConfidenceBadge score={selectedRecord.confidence} />
                   </div>
                 )}
-              </div>
-            )}
-
-            {editingMeta && (
-              <div className="flex gap-0 border border-black mt-2">
-                <button
-                  onClick={handleSaveMeta}
-                  disabled={savingMeta}
-                  className="flex-1 py-1.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors border-r border-neutral-700"
-                >
-                  {savingMeta ? <Loader2 className="w-3 h-3 animate-spin mx-auto" /> : 'Save'}
-                </button>
-                <button
-                  onClick={() => setEditingMeta(false)}
-                  className="flex-1 py-1.5 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors"
-                >
-                  Cancel
-                </button>
               </div>
             )}
           </div>
@@ -410,7 +519,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
           </div>
 
           <div className="border-b border-neutral-100 px-6 py-1.5 bg-neutral-50">
-            <div className="grid grid-cols-[20px_1fr_80px_80px_70px_70px_60px_52px]">
+            <div className="grid grid-cols-[20px_1fr_80px_70px_70px_60px_50px_60px_44px]">
               <p className="text-[8px] uppercase tracking-widest text-neutral-300"></p>
               <p className="text-[8px] uppercase tracking-widest text-neutral-400">Title / Label</p>
               <p className="text-[8px] uppercase tracking-widest text-neutral-400">Cat No.</p>
@@ -418,7 +527,10 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
               <p className="text-[8px] uppercase tracking-widest text-neutral-400">Country</p>
               <p className="text-[8px] uppercase tracking-widest text-neutral-400">Format</p>
               <p className="text-[8px] uppercase tracking-widest text-neutral-400">Score</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400"></p>
+              <p className="text-[8px] uppercase tracking-widest text-neutral-400 flex items-center gap-0.5">
+                <Eye className="w-2.5 h-2.5" /> Visual
+              </p>
+              <p className="text-[8px] uppercase tracking-widest text-neutral-300"></p>
             </div>
           </div>
 
@@ -444,7 +556,68 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
   );
 }
 
-function XCircle({ className }: { className?: string }) {
+interface SuccessViewProps {
+  record: VinylRecord;
+  candidate: DiscogsCandidate;
+  onScanNext: () => void;
+  onBackToQueue: () => void;
+}
+
+function SuccessView({ record, candidate, onScanNext, onBackToQueue }: SuccessViewProps) {
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center px-8">
+      <div className="w-full max-w-sm border border-black">
+        <div className="border-b border-black px-6 py-3 bg-black">
+          <p className="text-[9px] uppercase tracking-widest font-semibold text-white">Added to Discogs</p>
+        </div>
+        <div className="px-6 py-6 border-b border-black space-y-3">
+          <div>
+            <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Artist / Title</p>
+            <p className="text-sm font-medium text-black">
+              {record.artist ?? '—'}{record.title ? ` / ${record.title}` : ''}
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Label</p>
+              <p className="text-xs text-black font-medium">{candidate.label ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Cat No.</p>
+              <p className="text-xs text-black font-mono">{candidate.catno ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Year</p>
+              <p className="text-xs text-black font-medium">{candidate.year ?? '—'}</p>
+            </div>
+          </div>
+          {candidate.score !== undefined && (
+            <div className="pt-1">
+              <ConfidenceBadge score={candidate.score} />
+            </div>
+          )}
+        </div>
+        <div className="flex">
+          <button
+            onClick={onBackToQueue}
+            className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-50 hover:text-black transition-colors border-r border-black"
+          >
+            Back to Queue
+          </button>
+          <button
+            onClick={onScanNext}
+            className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest bg-black text-white hover:bg-neutral-800 transition-colors flex items-center justify-center gap-1.5"
+          >
+            <Plus className="w-3 h-3" />
+            Scan Next Record
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function XCircleIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
       <circle cx="12" cy="12" r="10" />
@@ -464,11 +637,20 @@ function CandidateRow({ candidate, isChosen, onSelect }: CandidateRowProps) {
   const [expanded, setExpanded] = useState(false);
   const discogsUrl = `https://www.discogs.com/release/${candidate.discogs_release_id}`;
 
+  const visualScore = candidate.visual_score;
+  const visualColor = visualScore === null
+    ? 'text-neutral-300'
+    : visualScore >= 70
+    ? isChosen ? 'text-white' : 'text-black'
+    : visualScore >= 40
+    ? isChosen ? 'text-neutral-400' : 'text-neutral-500'
+    : isChosen ? 'text-neutral-600' : 'text-neutral-400';
+
   return (
     <div className={`border-b border-neutral-100 transition-colors ${isChosen ? 'bg-black' : 'hover:bg-neutral-50'}`}>
       <div
         onClick={onSelect}
-        className="grid grid-cols-[20px_1fr_80px_80px_70px_70px_60px_52px] items-center px-6 py-3 cursor-pointer"
+        className="grid grid-cols-[20px_1fr_80px_70px_70px_60px_50px_60px_44px] items-center px-6 py-3 cursor-pointer"
       >
         <div className={`w-3.5 h-3.5 border flex items-center justify-center shrink-0 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
           {isChosen && <div className="w-2 h-2 bg-white" />}
@@ -484,6 +666,9 @@ function CandidateRow({ candidate, isChosen, onSelect }: CandidateRowProps) {
         <div className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.country ?? '—'}</div>
         <div className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.format ?? '—'}</div>
         <div className={`text-[10px] font-semibold ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.score}</div>
+        <div className={`text-[10px] font-medium ${visualColor}`}>
+          {visualScore !== null ? `${visualScore}%` : '—'}
+        </div>
         <div className="flex items-center gap-2 justify-end">
           <a
             href={discogsUrl}
@@ -502,16 +687,25 @@ function CandidateRow({ candidate, isChosen, onSelect }: CandidateRowProps) {
           </button>
         </div>
       </div>
-      {expanded && candidate.reasons_json && candidate.reasons_json.length > 0 && (
-        <div className="px-6 pb-3 flex flex-wrap gap-1.5">
-          {candidate.reasons_json.map((reason, i) => (
-            <span
-              key={i}
-              className={`text-[9px] uppercase tracking-widest px-2 py-0.5 border ${isChosen ? 'border-neutral-700 text-neutral-400' : 'border-neutral-200 text-neutral-500'}`}
-            >
-              {reason}
-            </span>
-          ))}
+      {expanded && (
+        <div className="px-6 pb-3 space-y-2">
+          {candidate.reasons_json && candidate.reasons_json.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {candidate.reasons_json.map((reason, i) => (
+                <span
+                  key={i}
+                  className={`text-[9px] uppercase tracking-widest px-2 py-0.5 border ${isChosen ? 'border-neutral-700 text-neutral-400' : 'border-neutral-200 text-neutral-500'}`}
+                >
+                  {reason}
+                </span>
+              ))}
+            </div>
+          )}
+          {candidate.visual_reason && (
+            <p className={`text-[10px] italic ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
+              Visual: {candidate.visual_reason}
+            </p>
+          )}
         </div>
       )}
     </div>
