@@ -7,6 +7,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const ALGORITHM = "AES-GCM";
+
+async function deriveKey(secret: string): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: encoder.encode("discogs-token-encryption"), iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: ALGORITHM, length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+async function decryptToken(ciphertext: string, secret: string): Promise<string> {
+  const key = await deriveKey(secret);
+  const raw = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
+  const iv = raw.slice(0, 12);
+  const data = raw.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: ALGORITHM, iv }, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+
 interface ExtractedMetadata {
   artist: string | null;
   title: string | null;
@@ -238,7 +267,11 @@ Deno.serve(async (req: Request) => {
         .eq("id", record.user_id)
         .maybeSingle();
       if (userProfile?.discogs_token_encrypted) {
-        userDiscogsToken = userProfile.discogs_token_encrypted;
+        try {
+          userDiscogsToken = await decryptToken(userProfile.discogs_token_encrypted, supabaseServiceKey);
+        } catch {
+          userDiscogsToken = userProfile.discogs_token_encrypted;
+        }
       }
     }
 

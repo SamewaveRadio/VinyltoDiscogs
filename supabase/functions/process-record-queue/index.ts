@@ -7,6 +7,35 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const ALGORITHM = "AES-GCM";
+
+async function deriveKey(secret: string): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: encoder.encode("discogs-token-encryption"), iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: ALGORITHM, length: 256 },
+    false,
+    ["decrypt"]
+  );
+}
+
+async function decryptToken(ciphertext: string, secret: string): Promise<string> {
+  const key = await deriveKey(secret);
+  const raw = Uint8Array.from(atob(ciphertext), (c) => c.charCodeAt(0));
+  const iv = raw.slice(0, 12);
+  const data = raw.slice(12);
+  const decrypted = await crypto.subtle.decrypt({ name: ALGORITHM, iv }, key, data);
+  return new TextDecoder().decode(decrypted);
+}
+
 interface ExtractedMetadata {
   artist: string | null;
   title: string | null;
@@ -151,7 +180,13 @@ async function processRecord(
   if (record?.user_id) {
     const { data: profile } = await supabase
       .from("users").select("discogs_token_encrypted").eq("id", record.user_id).maybeSingle();
-    if (profile?.discogs_token_encrypted) userDiscogsToken = profile.discogs_token_encrypted;
+    if (profile?.discogs_token_encrypted) {
+      try {
+        userDiscogsToken = await decryptToken(profile.discogs_token_encrypted, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      } catch {
+        userDiscogsToken = profile.discogs_token_encrypted;
+      }
+    }
   }
 
   let metadata: ExtractedMetadata = { artist: null, title: null, label: null, catalog_number: null, year: null, confidence: 0 };

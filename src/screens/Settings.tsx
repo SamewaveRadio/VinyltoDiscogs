@@ -35,23 +35,31 @@ export default function Settings() {
     setSaving(true);
     setSaved(false);
 
-    const updates: Partial<UserProfile> & { discogs_token_encrypted?: string } = {
-      discogs_username: discogsUsername || null,
-    };
+    const session = (await supabase.auth.getSession()).data.session;
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/save-discogs-token`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({
+          discogs_username: discogsUsername || null,
+          discogs_token: discogsToken || null,
+        }),
+      }
+    );
 
-    if (discogsToken) {
-      updates.discogs_token_encrypted = discogsToken;
-    }
-
-    if (profile) {
-      await supabase.from('user_profiles').update(updates).eq('id', user.id);
-    } else {
-      await supabase.from('user_profiles').insert({ id: user.id, email: user.email ?? '', ...updates });
+    if (response.ok) {
+      setProfile((prev) => prev ? { ...prev, discogs_username: discogsUsername || null, discogs_token_encrypted: discogsToken ? '***' : prev.discogs_token_encrypted } : null);
+      setDiscogsToken('');
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
     }
 
     setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
   };
 
   if (loading) {
