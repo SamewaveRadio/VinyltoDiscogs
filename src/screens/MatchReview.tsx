@@ -1,8 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  ArrowLeft, CheckCircle2, Loader2, ExternalLink,
-  ChevronDown, ChevronUp, Edit2, AlertTriangle, Plus
-} from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, ExternalLink, ChevronDown, ChevronUp, CreditCard as Edit2, AlertTriangle, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { VinylRecord, DiscogsCandidate, RecordPhoto } from '../types';
