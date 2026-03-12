@@ -1,7 +1,7 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { RecordPhoto } from '../types';
+import { RecordPhoto, RecordStatus } from '../types';
 
 type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
 
@@ -17,26 +17,41 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { id: 'upload',   label: 'Uploading images',    sublabel: 'Preparing photo data' },
-  { id: 'extract',  label: 'Extracting metadata', sublabel: 'Reading artist, label, catalog number' },
-  { id: 'search',   label: 'Searching Discogs',   sublabel: 'Querying release database' },
-  { id: 'rank',     label: 'Ranking matches',      sublabel: 'Scoring candidates by relevance' },
+  { id: 'queued',   label: 'Queued for processing', sublabel: 'Waiting for worker' },
+  { id: 'extract',  label: 'Extracting metadata',   sublabel: 'Reading artist, label, catalog number' },
+  { id: 'search',   label: 'Searching Discogs',      sublabel: 'Querying release database' },
+  { id: 'rank',     label: 'Ranking matches',         sublabel: 'Scoring candidates by relevance' },
 ];
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
 
+function statusToSteps(recordStatus: RecordStatus): Record<string, StepStatus> {
+  switch (recordStatus) {
+    case 'queued':
+      return { queued: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
+    case 'processing':
+      return { queued: 'done', extract: 'done', search: 'active', rank: 'pending' };
+    case 'matched':
+    case 'needs_review':
+      return { queued: 'done', extract: 'done', search: 'done', rank: 'done' };
+    case 'failed':
+      return { queued: 'done', extract: 'done', search: 'error', rank: 'pending' };
+    default:
+      return { queued: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
+  }
+}
+
 export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScreenProps) {
   const [photos, setPhotos] = useState<RecordPhoto[]>([]);
-  const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>({
-    upload: 'done',
-    extract: 'active',
-    search: 'pending',
-    rank: 'pending',
-  });
+  const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>(
+    statusToSteps('queued')
+  );
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [finalStatus, setFinalStatus] = useState<'matched' | 'needs_review' | null>(null);
-  const calledRef = useRef(false);
+
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const navigatedRef = useRef(false);
 
   useEffect(() => {
     supabase
@@ -46,73 +61,45 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
       .then(({ data }) => setPhotos(data ?? []));
   }, [recordId]);
 
-  useEffect(() => {
-    if (calledRef.current) return;
-    calledRef.current = true;
+  const checkStatus = useCallback(async () => {
+    const { data: record } = await supabase
+      .from('records')
+      .select('status, error_message')
+      .eq('id', recordId)
+      .maybeSingle();
 
-    const run = async () => {
-      const stepDelay = (ms: number) => new Promise(res => setTimeout(res, ms));
+    if (!record) return;
 
-      setStepStatuses({ upload: 'done', extract: 'active', search: 'pending', rank: 'pending' });
-      await stepDelay(800);
+    const status = record.status as RecordStatus;
+    setStepStatuses(statusToSteps(status));
 
-      setStepStatuses({ upload: 'done', extract: 'done', search: 'active', rank: 'pending' });
-
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-        const response = await fetch(`${supabaseUrl}/functions/v1/process-record`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-            'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ record_id: recordId }),
-        });
-
-        setStepStatuses({ upload: 'done', extract: 'done', search: 'done', rank: 'active' });
-        await stepDelay(600);
-
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({ error: 'Unknown error' }));
-          throw new Error(errData.error ?? `HTTP ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        setStepStatuses({ upload: 'done', extract: 'done', search: 'done', rank: 'done' });
-        await stepDelay(500);
-
-        setFinalStatus(result.status === 'matched' ? 'matched' : 'needs_review');
+    if (status === 'matched' || status === 'needs_review') {
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      if (!navigatedRef.current) {
+        navigatedRef.current = true;
+        setFinalStatus(status === 'matched' ? 'matched' : 'needs_review');
         setDone(true);
-
-        await stepDelay(1200);
-
-        if (result.status === 'matched') {
-          onNavigate('match-review', recordId);
-        } else {
-          onNavigate('needs-review', recordId);
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
-        setStepStatuses(prev => {
-          const active = Object.entries(prev).find(([, v]) => v === 'active');
-          if (!active) return prev;
-          return { ...prev, [active[0]]: 'error' };
-        });
-
-        await supabase.from('records').update({
-          status: 'failed',
-          error_message: msg,
-        }).eq('id', recordId);
+        setTimeout(() => {
+          if (status === 'matched') onNavigate('match-review', recordId);
+          else onNavigate('needs-review', recordId);
+        }, 1200);
       }
-    };
-
-    run();
+    } else if (status === 'failed') {
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+      setError(record.error_message ?? 'Processing failed.');
+      setStepStatuses(prev => {
+        const active = Object.entries(prev).find(([, v]) => v === 'active');
+        if (!active) return { ...prev, search: 'error' };
+        return { ...prev, [active[0]]: 'error' };
+      });
+    }
   }, [recordId, onNavigate]);
+
+  useEffect(() => {
+    checkStatus();
+    intervalRef.current = setInterval(checkStatus, 2000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [checkStatus]);
 
   const coverPhoto = photos.find(p => p.photo_type === 'cover_front') ?? photos[0];
 
@@ -152,9 +139,9 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                 return (
                   <div key={step.id} className="flex items-center gap-4 px-4 py-3">
                     <div className="w-5 shrink-0 flex items-center justify-center">
-                      {status === 'done' && <CheckCircle2 className="w-4 h-4 text-black" />}
-                      {status === 'active' && <Loader2 className="w-4 h-4 text-black animate-spin" />}
-                      {status === 'error' && <XCircle className="w-4 h-4 text-black" />}
+                      {status === 'done'    && <CheckCircle2 className="w-4 h-4 text-black" />}
+                      {status === 'active'  && <Loader2 className="w-4 h-4 text-black animate-spin" />}
+                      {status === 'error'   && <XCircle className="w-4 h-4 text-black" />}
                       {status === 'pending' && (
                         <span className="text-[9px] font-medium text-neutral-300 uppercase tracking-widest">
                           {String(idx + 1).padStart(2, '0')}
@@ -163,9 +150,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className={`text-xs font-medium transition-colors ${
-                        status === 'pending' ? 'text-neutral-300' :
-                        status === 'active' ? 'text-black' :
-                        status === 'done' ? 'text-black' : 'text-black'
+                        status === 'pending' ? 'text-neutral-300' : 'text-black'
                       }`}>
                         {step.label}
                       </p>
@@ -174,18 +159,10 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                       )}
                     </div>
                     <div className="shrink-0">
-                      {status === 'done' && (
-                        <span className="text-[9px] uppercase tracking-widest text-neutral-400">Done</span>
-                      )}
-                      {status === 'active' && (
-                        <span className="text-[9px] uppercase tracking-widest text-black animate-pulse">Running</span>
-                      )}
-                      {status === 'pending' && (
-                        <span className="text-[9px] uppercase tracking-widest text-neutral-200">Waiting</span>
-                      )}
-                      {status === 'error' && (
-                        <span className="text-[9px] uppercase tracking-widest text-black">Failed</span>
-                      )}
+                      {status === 'done'    && <span className="text-[9px] uppercase tracking-widest text-neutral-400">Done</span>}
+                      {status === 'active'  && <span className="text-[9px] uppercase tracking-widest text-black animate-pulse">Running</span>}
+                      {status === 'pending' && <span className="text-[9px] uppercase tracking-widest text-neutral-200">Waiting</span>}
+                      {status === 'error'   && <span className="text-[9px] uppercase tracking-widest text-black">Failed</span>}
                     </div>
                   </div>
                 );

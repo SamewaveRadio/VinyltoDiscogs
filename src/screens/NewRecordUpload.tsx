@@ -92,7 +92,7 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
 
     const { data: record, error: recordError } = await supabase
       .from('records')
-      .insert({ user_id: user.id, status: 'uploaded' })
+      .insert({ user_id: user.id, status: 'queued' })
       .select()
       .single();
 
@@ -115,6 +115,19 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       setSubmitting(false);
       return;
     }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+
+    await fetch(`${supabaseUrl}/functions/v1/enqueue-record`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session?.access_token}`,
+        'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ record_id: record.id }),
+    });
 
     setSubmitting(false);
     onNavigate('processing', record.id);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +11,7 @@ interface QueueDashboardProps {
 }
 
 const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dotPulse?: boolean }> = {
+  queued:       { label: 'Queued',       badgeClass: 'border-neutral-300 text-neutral-400', dotPulse: true },
   uploaded:     { label: 'Uploaded',     badgeClass: 'border-neutral-300 text-neutral-400' },
   processing:   { label: 'Processing',   badgeClass: 'border-neutral-400 text-neutral-600', dotPulse: true },
   matched:      { label: 'Matched',      badgeClass: 'border-black text-black' },
@@ -19,7 +20,7 @@ const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dot
   failed:       { label: 'Failed',       badgeClass: 'border-black bg-black text-white' },
 };
 
-const STATUS_ORDER: RecordStatus[] = ['processing', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
+const STATUS_ORDER: RecordStatus[] = ['queued', 'processing', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
 
 interface RecordWithThumb extends VinylRecord {
   thumbUrl?: string;
@@ -31,21 +32,8 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const fetchRecords = async () => {
-    if (!user) return;
-
-    const { data: recs } = await supabase
-      .from('records')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (!recs || recs.length === 0) {
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
-
+  const buildThumbMap = async (recs: VinylRecord[]) => {
+    if (recs.length === 0) return {};
     const { data: photos } = await supabase
       .from('record_photos')
       .select('record_id, photo_type, file_url')
@@ -54,20 +42,68 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     const thumbMap: Record<string, string> = {};
     if (photos) {
       for (const photo of photos) {
-        if (!thumbMap[photo.record_id]) {
-          thumbMap[photo.record_id] = photo.file_url;
-        }
-        if (photo.photo_type === 'cover_front') {
-          thumbMap[photo.record_id] = photo.file_url;
-        }
+        if (!thumbMap[photo.record_id]) thumbMap[photo.record_id] = photo.file_url;
+        if (photo.photo_type === 'cover_front') thumbMap[photo.record_id] = photo.file_url;
       }
     }
-
-    setRecords(recs.map(r => ({ ...r, thumbUrl: thumbMap[r.id] })));
-    setLoading(false);
+    return thumbMap;
   };
 
-  useEffect(() => { fetchRecords(); }, [user]);
+  const fetchRecords = useCallback(async () => {
+    if (!user) return;
+    const { data: recs } = await supabase
+      .from('records')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    const recList = recs ?? [];
+    if (recList.length === 0) {
+      setRecords([]);
+      setLoading(false);
+      return;
+    }
+
+    const thumbMap = await buildThumbMap(recList);
+    setRecords(recList.map(r => ({ ...r, thumbUrl: thumbMap[r.id] })));
+    setLoading(false);
+  }, [user]);
+
+  useEffect(() => { fetchRecords(); }, [fetchRecords]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('queue-dashboard-records')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'records', filter: `user_id=eq.${user.id}` },
+        async (payload) => {
+          if (payload.eventType === 'DELETE') {
+            setRecords(prev => prev.filter(r => r.id !== payload.old.id));
+            return;
+          }
+
+          const updated = payload.new as VinylRecord;
+
+          if (payload.eventType === 'INSERT') {
+            const thumbMap = await buildThumbMap([updated]);
+            setRecords(prev => [{ ...updated, thumbUrl: thumbMap[updated.id] }, ...prev]);
+            return;
+          }
+
+          if (payload.eventType === 'UPDATE') {
+            setRecords(prev => prev.map(r =>
+              r.id === updated.id ? { ...r, ...updated } : r
+            ));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [user]);
 
   const handleDelete = async (e: React.MouseEvent, recordId: string) => {
     e.stopPropagation();
@@ -80,7 +116,9 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   const handleRowClick = (record: RecordWithThumb) => {
     if (record.status === 'matched') onNavigate('match-review', record.id);
     else if (record.status === 'needs_review') onNavigate('needs-review', record.id);
-    else if (record.status === 'processing' || record.status === 'uploaded') onNavigate('processing', record.id);
+    else if (record.status === 'processing' || record.status === 'queued' || record.status === 'uploaded') {
+      onNavigate('processing', record.id);
+    }
   };
 
   const grouped = STATUS_ORDER.reduce((acc, status) => {
@@ -88,6 +126,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     return acc;
   }, {} as Record<RecordStatus, RecordWithThumb[]>);
 
+  const activeCount = records.filter(r => ['queued', 'processing'].includes(r.status)).length;
   const totalCount = records.length;
 
   if (loading) {
@@ -104,6 +143,12 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
         <div className="flex items-baseline gap-4">
           <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Queue</h1>
           <span className="text-[10px] text-neutral-400 uppercase tracking-wider">{totalCount} records</span>
+          {activeCount > 0 && (
+            <span className="flex items-center gap-1 text-[10px] text-neutral-500 uppercase tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse" />
+              {activeCount} processing
+            </span>
+          )}
         </div>
         <button
           onClick={() => onNavigate('upload')}
@@ -139,7 +184,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
 
           {STATUS_ORDER.map((status) => {
             const statusRecords = grouped[status];
-            if (statusRecords.length === 0) return null;
+            if (!statusRecords || statusRecords.length === 0) return null;
             return statusRecords.map((record) => (
               <RecordRow
                 key={record.id}
@@ -161,9 +206,9 @@ function StatusBadge({ status }: { status: RecordStatus }) {
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 border text-[9px] font-medium uppercase tracking-widest whitespace-nowrap ${meta.badgeClass}`}>
       <span className={`w-1 h-1 rounded-full shrink-0 ${
-        status === 'failed' ? 'bg-white' :
-        status === 'added' ? 'bg-neutral-300' :
-        status === 'matched' ? 'bg-black' :
+        status === 'failed'       ? 'bg-white' :
+        status === 'added'        ? 'bg-neutral-300' :
+        status === 'matched'      ? 'bg-black' :
         status === 'needs_review' ? 'bg-neutral-700' :
         'bg-neutral-400'
       } ${meta.dotPulse ? 'animate-pulse' : ''}`} />
@@ -180,7 +225,7 @@ interface RecordRowProps {
 }
 
 function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps) {
-  const isClickable = ['matched', 'needs_review', 'processing', 'uploaded'].includes(record.status);
+  const isClickable = ['matched', 'needs_review', 'processing', 'uploaded', 'queued'].includes(record.status);
 
   return (
     <div
