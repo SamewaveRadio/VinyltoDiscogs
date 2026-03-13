@@ -124,25 +124,25 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
 
   if (!selectedRecord) {
     return (
-      <div className="min-h-screen">
-        <div className="border-b border-black px-8 py-4 flex items-center gap-4">
+      <div>
+        <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
           <button onClick={() => onNavigate('dashboard')} className="text-neutral-400 hover:text-black transition-colors">
             <ArrowLeft className="w-4 h-4" />
           </button>
-          <div className="flex items-baseline gap-4">
+          <div className="flex items-baseline gap-2 lg:gap-4">
             <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Needs Review</h1>
             <span className="text-[10px] text-neutral-400 uppercase tracking-wider">{records.length} pending</span>
           </div>
         </div>
 
         {records.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-32">
+          <div className="flex flex-col items-center justify-center py-20 lg:py-32">
             <CheckCircle2 className="w-6 h-6 text-neutral-300 mb-3" strokeWidth={1} />
             <p className="text-[10px] uppercase tracking-widest text-neutral-400">No records need review</p>
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[1fr_120px_100px_70px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
+            <div className="hidden lg:grid grid-cols-[1fr_120px_100px_70px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Artist / Title</p>
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Label</p>
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Cat No.</p>
@@ -152,9 +152,9 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
               <div
                 key={record.id}
                 onClick={() => openRecord(record)}
-                className="grid grid-cols-[1fr_120px_100px_70px] items-center px-8 py-3 border-b border-neutral-100 cursor-pointer hover:bg-neutral-50 transition-colors"
+                className="px-4 py-3 border-b border-neutral-100 cursor-pointer active:bg-neutral-50 lg:grid lg:grid-cols-[1fr_120px_100px_70px] lg:items-center lg:px-8 lg:hover:bg-neutral-50 transition-colors"
               >
-                <div className="min-w-0 pr-4">
+                <div className="min-w-0 lg:pr-4">
                   <div className="flex items-baseline gap-2">
                     <span className="text-xs font-medium text-black truncate">{record.artist ?? '—'}</span>
                     {record.title && (
@@ -162,10 +162,14 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
                         <span className="text-xs text-neutral-600 truncate">{record.title}</span></>
                     )}
                   </div>
+                  <div className="flex items-center gap-2 mt-1 lg:hidden">
+                    {record.label && <span className="text-[10px] text-neutral-400 truncate">{record.label}</span>}
+                    {record.catalog_number && <span className="text-[10px] text-neutral-400 font-mono truncate">{record.catalog_number}</span>}
+                  </div>
                 </div>
-                <div className="text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '—'}</div>
-                <div className="text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '—'}</div>
-                <div className="text-[11px] text-neutral-500">{record.year ?? '—'}</div>
+                <div className="hidden lg:block text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '—'}</div>
+                <div className="hidden lg:block text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '—'}</div>
+                <div className="hidden lg:block text-[11px] text-neutral-500">{record.year ?? '—'}</div>
               </div>
             ))}
           </div>
@@ -175,20 +179,20 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
   }
 
   return (
-    <div className="min-h-screen">
-      <div className="border-b border-black px-8 py-4 flex items-center gap-4">
+    <div>
+      <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
         <button onClick={() => setSelectedRecord(null)} className="text-neutral-400 hover:text-black transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex items-baseline gap-4 min-w-0 flex-1">
+        <div className="flex items-baseline gap-2 min-w-0 flex-1 lg:gap-4">
           <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black shrink-0">Needs Review</h1>
-          <span className="text-[10px] text-neutral-400 uppercase tracking-wider truncate">
+          <span className="text-[10px] text-neutral-400 uppercase tracking-wider truncate hidden sm:inline">
             {selectedRecord.artist ?? '—'} / {selectedRecord.title ?? 'Untitled'}
           </span>
         </div>
       </div>
 
-      <div className="px-8 py-8 max-w-lg">
+      <div className="px-4 py-6 lg:px-8 lg:py-8 lg:max-w-lg">
         <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400 mb-4">
           Edit Metadata
         </p>
@@ -202,7 +206,7 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
             { key: 'year', label: 'Year' },
           ].map(({ key, label }, i) => (
             <div key={key} className={`flex items-center ${i < 4 ? 'border-b border-neutral-200' : ''}`}>
-              <div className="w-24 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0">
+              <div className="w-20 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0 lg:w-24">
                 <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">{label}</p>
               </div>
               <input
@@ -219,19 +223,19 @@ export default function NeedsReview({ onNavigate, recordId }: NeedsReviewProps) 
           <p className="text-[10px] text-neutral-500 mb-4">{retryError}</p>
         )}
 
-        <div className="flex items-center gap-0 border border-black">
+        <div className="flex flex-col border border-black sm:flex-row">
           <button
             onClick={handleRetry}
             disabled={retrying}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-r border-black disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-1.5 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-b border-black disabled:opacity-50 sm:border-b-0 sm:border-r sm:py-2.5"
           >
             {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-            Retry Discogs Search
+            Retry Search
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors"
+            className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors sm:py-2.5"
           >
             {saving && <Loader2 className="w-3 h-3 animate-spin" />}
             Mark as Added

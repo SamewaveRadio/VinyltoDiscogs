@@ -71,15 +71,15 @@ export default function Settings() {
   }
 
   return (
-    <div className="min-h-screen">
-      <div className="border-b border-black px-8 py-4">
+    <div>
+      <div className="border-b border-black px-4 py-3 lg:px-8 lg:py-4">
         <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Settings</h1>
       </div>
 
-      <div className="px-8 py-8 max-w-md">
-        <div className="mb-8">
+      <div className="px-4 py-6 lg:px-8 lg:py-8 lg:max-w-md">
+        <div className="mb-6 lg:mb-8">
           <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400 mb-1">Account</p>
-          <p className="text-xs text-neutral-600">{user?.email}</p>
+          <p className="text-xs text-neutral-600 break-all">{user?.email}</p>
         </div>
 
         <div>
@@ -87,7 +87,7 @@ export default function Settings() {
 
           <div className="border border-black mb-4">
             <div className="border-b border-neutral-200 flex items-center">
-              <div className="w-28 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0">
+              <div className="w-20 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0 lg:w-28">
                 <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">Username</p>
               </div>
               <input
@@ -95,19 +95,19 @@ export default function Settings() {
                 value={discogsUsername}
                 onChange={(e) => setDiscogsUsername(e.target.value)}
                 placeholder="discogs_username"
-                className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300"
+                className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300 min-w-0"
               />
             </div>
             <div className="flex items-center">
-              <div className="w-28 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0">
+              <div className="w-20 px-3 py-2.5 border-r border-neutral-200 bg-neutral-50 shrink-0 lg:w-28">
                 <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">API Token</p>
               </div>
               <input
                 type="password"
                 value={discogsToken}
                 onChange={(e) => setDiscogsToken(e.target.value)}
-                placeholder={profile?.discogs_token_encrypted ? '••••••••' : 'Enter token'}
-                className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300"
+                placeholder={profile?.discogs_token_encrypted ? '--------' : 'Enter token'}
+                className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300 min-w-0"
               />
             </div>
           </div>
@@ -120,7 +120,7 @@ export default function Settings() {
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors"
+            className="w-full flex items-center justify-center gap-2 px-5 py-3 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors sm:w-auto sm:py-2.5"
           >
             {saving && <Loader2 className="w-3 h-3 animate-spin" />}
             {saved && <CheckCircle2 className="w-3 h-3" />}

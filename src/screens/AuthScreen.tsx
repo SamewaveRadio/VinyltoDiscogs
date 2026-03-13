@@ -16,19 +16,24 @@ export default function AuthScreen() {
     setLoading(true);
     setError('');
 
-    const { error } = mode === 'login'
-      ? await supabase.auth.signInWithPassword({ email, password })
-      : await supabase.auth.signUp({ email, password });
+    try {
+      const { error } = mode === 'login'
+        ? await supabase.auth.signInWithPassword({ email, password })
+        : await supabase.auth.signUp({ email, password });
 
-    if (error) setError(error.message);
+      if (error) setError(error.message);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'An unexpected error occurred';
+      setError(msg);
+    }
     setLoading(false);
   };
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4">
+    <div className="min-h-screen min-h-[100dvh] bg-white flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="border border-black">
-          <div className="border-b border-black px-6 py-4 bg-black">
+          <div className="border-b border-black px-4 py-3 bg-black sm:px-6 sm:py-4">
             <h1 className="text-[10px] font-semibold uppercase tracking-[0.25em] text-white">
               Vinyl to Discogs
             </h1>
@@ -39,7 +44,7 @@ export default function AuthScreen() {
               <button
                 key={m}
                 onClick={() => { setMode(m); setError(''); }}
-                className={`flex-1 py-2.5 text-[9px] font-semibold uppercase tracking-widest transition-colors ${
+                className={`flex-1 py-3 text-[9px] font-semibold uppercase tracking-widest transition-colors sm:py-2.5 ${
                   mode === m
                     ? 'bg-neutral-50 text-black'
                     : 'text-neutral-400 hover:text-black hover:bg-neutral-50'
@@ -50,7 +55,7 @@ export default function AuthScreen() {
             ))}
           </div>
 
-          <form onSubmit={handleSubmit} className="px-6 py-6 space-y-0">
+          <form onSubmit={handleSubmit} className="px-4 py-5 sm:px-6 sm:py-6">
             {error && (
               <div className="border border-black px-3 py-2 mb-4">
                 <p className="text-[10px] text-black">{error}</p>
@@ -68,7 +73,7 @@ export default function AuthScreen() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   placeholder="you@example.com"
-                  className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300"
+                  className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300 min-w-0"
                 />
               </div>
               <div className="flex items-center">
@@ -80,8 +85,8 @@ export default function AuthScreen() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  placeholder="••••••••"
-                  className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300"
+                  placeholder="--------"
+                  className="flex-1 px-3 py-2.5 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300 min-w-0"
                 />
               </div>
             </div>
@@ -89,7 +94,7 @@ export default function AuthScreen() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-3 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors sm:py-2.5"
             >
               {loading && <Loader2 className="w-3 h-3 animate-spin" />}
               {mode === 'login' ? 'Sign In' : 'Create Account'}

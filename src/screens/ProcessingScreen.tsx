@@ -103,23 +103,23 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
   const coverPhoto = photos.find(p => p.photo_type === 'cover_front') ?? photos[0];
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <div className="border-b border-black px-8 py-4">
-        <div className="flex items-baseline gap-4">
+    <div className="flex flex-col min-h-[calc(100vh-3.5rem)] lg:min-h-screen">
+      <div className="border-b border-black px-4 py-3 lg:px-8 lg:py-4">
+        <div className="flex items-baseline gap-2 lg:gap-4">
           <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Processing</h1>
           <span className="text-[10px] text-neutral-400 uppercase tracking-wider">Record Analysis</span>
         </div>
       </div>
 
-      <div className="flex-1 flex items-center justify-center py-16 px-8">
+      <div className="flex-1 flex items-center justify-center py-10 px-4 lg:py-16 lg:px-8">
         <div className="w-full max-w-lg">
           {photos.length > 0 && (
-            <div className="flex gap-2 mb-10 justify-center">
+            <div className="flex gap-2 mb-8 justify-center lg:mb-10">
               {photos.slice(0, 4).map((photo) => (
                 <div
                   key={photo.id}
                   className={`border border-neutral-200 overflow-hidden bg-neutral-50 transition-all ${
-                    photo.id === coverPhoto?.id ? 'w-20 h-20 border-black' : 'w-14 h-14'
+                    photo.id === coverPhoto?.id ? 'w-16 h-16 border-black sm:w-20 sm:h-20' : 'w-11 h-11 sm:w-14 sm:h-14'
                   }`}
                 >
                   <img src={photo.file_url} alt={photo.photo_type} className="w-full h-full object-cover" />
@@ -128,15 +128,15 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
             </div>
           )}
 
-          <div className="border border-black mb-8">
-            <div className="px-4 py-2 border-b border-black bg-neutral-50">
+          <div className="border border-black mb-6 lg:mb-8">
+            <div className="px-3 py-2 border-b border-black bg-neutral-50 lg:px-4">
               <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Pipeline Status</p>
             </div>
             <div className="divide-y divide-neutral-100">
               {STEPS.map((step, idx) => {
                 const status = stepStatuses[step.id] ?? 'pending';
                 return (
-                  <div key={step.id} className="flex items-center gap-4 px-4 py-3">
+                  <div key={step.id} className="flex items-center gap-3 px-3 py-3 lg:gap-4 lg:px-4">
                     <div className="w-5 shrink-0 flex items-center justify-center">
                       {status === 'done'    && <CheckCircle2 className="w-4 h-4 text-black" />}
                       {status === 'active'  && <Loader2 className="w-4 h-4 text-black animate-spin" />}
@@ -170,7 +170,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
           </div>
 
           {done && finalStatus && (
-            <div className="border border-black px-4 py-3 flex items-center gap-3 bg-neutral-50">
+            <div className="border border-black px-3 py-3 flex items-center gap-3 bg-neutral-50 lg:px-4">
               {finalStatus === 'matched' ? (
                 <>
                   <CheckCircle2 className="w-4 h-4 text-black shrink-0" />
@@ -192,19 +192,19 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
           )}
 
           {error && (
-            <div className="border border-black px-4 py-3">
+            <div className="border border-black px-3 py-3 lg:px-4">
               <p className="text-[9px] uppercase tracking-widest font-medium text-black mb-1">Processing Error</p>
               <p className="text-[11px] text-neutral-600">{error}</p>
-              <div className="flex gap-0 mt-3 border border-black">
+              <div className="flex flex-col mt-3 border border-black sm:flex-row">
                 <button
                   onClick={() => onNavigate('dashboard')}
-                  className="flex-1 py-2 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-r border-black"
+                  className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r sm:py-2"
                 >
                   Back to Dashboard
                 </button>
                 <button
                   onClick={() => onNavigate('needs-review', recordId)}
-                  className="flex-1 py-2 text-[10px] font-semibold uppercase tracking-widest text-black hover:bg-neutral-100 transition-colors"
+                  className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-black hover:bg-neutral-100 transition-colors sm:py-2"
                 >
                   Manual Review
                 </button>
