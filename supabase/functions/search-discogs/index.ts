@@ -406,6 +406,7 @@ Deno.serve(async (req: Request) => {
         year: result.year ? parseInt(String(result.year)) : null,
         country: result.country ?? null,
         format: (result.format ?? [])[0] ?? null,
+        thumb_url: result.thumb ?? null,
         score,
         reasons_json: reasons,
         visual_score,

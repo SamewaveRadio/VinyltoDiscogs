@@ -49,6 +49,7 @@ export interface DiscogsCandidate {
   format: string | null;
   score: number;
   reasons_json: string[];
+  thumb_url: string | null;
   visual_score: number | null;
   visual_reason: string | null;
   is_selected: boolean;

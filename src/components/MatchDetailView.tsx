@@ -400,6 +400,13 @@ function TopMatchCard({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
           <div className={`w-4 h-4 border flex items-center justify-center shrink-0 mt-0.5 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
             {isChosen && <div className="w-2.5 h-2.5 bg-white" />}
           </div>
+
+          {candidate.thumb_url && (
+            <div className={`w-16 h-16 shrink-0 border overflow-hidden bg-neutral-100 sm:w-20 sm:h-20 ${isChosen ? 'border-neutral-700' : 'border-neutral-200'}`}>
+              <img src={candidate.thumb_url} alt="" className="w-full h-full object-cover" />
+            </div>
+          )}
+
           <div className="flex-1 min-w-0">
             <p className={`text-sm font-medium truncate ${isChosen ? 'text-white' : 'text-black'}`}>
               {candidate.title ?? '---'}
@@ -485,6 +492,11 @@ function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
         <div className={`w-4 h-4 border flex items-center justify-center shrink-0 mt-0.5 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
           {isChosen && <div className="w-2.5 h-2.5 bg-white" />}
         </div>
+        {candidate.thumb_url && (
+          <div className={`w-10 h-10 shrink-0 border overflow-hidden bg-neutral-100 ${isChosen ? 'border-neutral-700' : 'border-neutral-200'}`}>
+            <img src={candidate.thumb_url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
             <span className={`text-xs font-medium truncate ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.title ?? '---'}</span>
