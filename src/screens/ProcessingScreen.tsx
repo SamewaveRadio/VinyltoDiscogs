@@ -17,34 +17,33 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { id: 'queued',   label: 'Queued for processing', sublabel: 'Waiting for worker' },
-  { id: 'extract',  label: 'Extracting metadata',   sublabel: 'Reading artist, label, catalog number' },
-  { id: 'search',   label: 'Searching Discogs',      sublabel: 'Querying release database' },
-  { id: 'rank',     label: 'Ranking matches',         sublabel: 'Scoring candidates by relevance' },
+  { id: 'process',  label: 'Processing record',    sublabel: 'Preparing record for analysis' },
+  { id: 'extract',  label: 'Extracting metadata',  sublabel: 'Reading artist, label, catalog number' },
+  { id: 'search',   label: 'Searching Discogs',    sublabel: 'Querying release database' },
+  { id: 'rank',     label: 'Ranking matches',       sublabel: 'Scoring candidates by relevance' },
 ];
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
 
 function statusToSteps(recordStatus: RecordStatus): Record<string, StepStatus> {
   switch (recordStatus) {
-    case 'queued':
-      return { queued: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
     case 'processing':
-      return { queued: 'done', extract: 'done', search: 'active', rank: 'pending' };
+      return { process: 'done', extract: 'active', search: 'pending', rank: 'pending' };
     case 'matched':
     case 'needs_review':
-      return { queued: 'done', extract: 'done', search: 'done', rank: 'done' };
+    case 'added':
+      return { process: 'done', extract: 'done', search: 'done', rank: 'done' };
     case 'failed':
-      return { queued: 'done', extract: 'done', search: 'error', rank: 'pending' };
+      return { process: 'done', extract: 'done', search: 'error', rank: 'pending' };
     default:
-      return { queued: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
+      return { process: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
   }
 }
 
 export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScreenProps) {
   const [photos, setPhotos] = useState<RecordPhoto[]>([]);
   const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>(
-    statusToSteps('queued')
+    statusToSteps('processing')
   );
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -177,7 +176,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   <CheckCircle2 className="w-4 h-4 text-black shrink-0" />
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-black">Matches Found</p>
-                    <p className="text-[10px] text-neutral-500 mt-0.5">Redirecting to Match Review…</p>
+                    <p className="text-[10px] text-neutral-500 mt-0.5">Redirecting to Match Review...</p>
                   </div>
                 </>
               ) : (
@@ -185,7 +184,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   <AlertTriangle className="w-4 h-4 text-black shrink-0" />
                   <div>
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-black">Needs Review</p>
-                    <p className="text-[10px] text-neutral-500 mt-0.5">No confident matches found. Redirecting…</p>
+                    <p className="text-[10px] text-neutral-500 mt-0.5">No confident matches found. Redirecting...</p>
                   </div>
                 </>
               )}
@@ -201,7 +200,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   onClick={() => onNavigate('dashboard')}
                   className="flex-1 py-2 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-r border-black"
                 >
-                  Back to Queue
+                  Back to Dashboard
                 </button>
                 <button
                   onClick={() => onNavigate('needs-review', recordId)}

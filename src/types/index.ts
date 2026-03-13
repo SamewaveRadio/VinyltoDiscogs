@@ -1,16 +1,4 @@
-export type RecordStatus = 'queued' | 'uploaded' | 'processing' | 'matched' | 'needs_review' | 'added' | 'failed';
-
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed';
-
-export interface ProcessingJob {
-  id: string;
-  record_id: string;
-  status: JobStatus;
-  attempts: number;
-  error_message: string | null;
-  created_at: string;
-  updated_at: string;
-}
+export type RecordStatus = 'processing' | 'matched' | 'needs_review' | 'added' | 'failed';
 export type PhotoType = 'cover_front' | 'cover_back' | 'label_a' | 'label_b';
 
 export interface UserProfile {

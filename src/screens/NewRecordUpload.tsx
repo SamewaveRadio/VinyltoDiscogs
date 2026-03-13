@@ -92,12 +92,12 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
 
     const { data: record, error: recordError } = await supabase
       .from('records')
-      .insert({ user_id: user.id, status: 'queued' })
+      .insert({ user_id: user.id, status: 'processing' })
       .select()
       .single();
 
     if (recordError || !record) {
-      setError('Failed to create record.');
+      setError(recordError?.message ?? 'Failed to create record.');
       setSubmitting(false);
       return;
     }
@@ -111,7 +111,7 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       })));
 
     if (photosError) {
-      setError('Failed to save photos.');
+      setError(photosError.message ?? 'Failed to save photos.');
       setSubmitting(false);
       return;
     }
@@ -119,7 +119,7 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
     const { data: { session } } = await supabase.auth.getSession();
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
-    await fetch(`${supabaseUrl}/functions/v1/enqueue-record`, {
+    const response = await fetch(`${supabaseUrl}/functions/v1/process-record`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -128,6 +128,13 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       },
       body: JSON.stringify({ record_id: record.id }),
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      setError(`Processing failed: ${errorText}`);
+      setSubmitting(false);
+      return;
+    }
 
     setSubmitting(false);
     onNavigate('processing', record.id);

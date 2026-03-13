@@ -11,8 +11,6 @@ interface QueueDashboardProps {
 }
 
 const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dotPulse?: boolean }> = {
-  queued:       { label: 'Queued',       badgeClass: 'border-neutral-300 text-neutral-400', dotPulse: true },
-  uploaded:     { label: 'Uploaded',     badgeClass: 'border-neutral-300 text-neutral-400' },
   processing:   { label: 'Processing',   badgeClass: 'border-neutral-400 text-neutral-600', dotPulse: true },
   matched:      { label: 'Matched',      badgeClass: 'border-black text-black' },
   needs_review: { label: 'Needs Review', badgeClass: 'border-neutral-700 text-neutral-700' },
@@ -20,7 +18,7 @@ const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dot
   failed:       { label: 'Failed',       badgeClass: 'border-black bg-black text-white' },
 };
 
-const STATUS_ORDER: RecordStatus[] = ['queued', 'processing', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
+const STATUS_ORDER: RecordStatus[] = ['processing', 'needs_review', 'matched', 'added', 'failed'];
 
 interface RecordWithThumb extends VinylRecord {
   thumbUrl?: string;
@@ -116,9 +114,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   const handleRowClick = (record: RecordWithThumb) => {
     if (record.status === 'matched') onNavigate('match-review', record.id);
     else if (record.status === 'needs_review') onNavigate('needs-review', record.id);
-    else if (record.status === 'processing' || record.status === 'queued' || record.status === 'uploaded') {
-      onNavigate('processing', record.id);
-    }
+    else if (record.status === 'processing') onNavigate('processing', record.id);
   };
 
   const grouped = STATUS_ORDER.reduce((acc, status) => {
@@ -126,7 +122,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     return acc;
   }, {} as Record<RecordStatus, RecordWithThumb[]>);
 
-  const activeCount = records.filter(r => ['queued', 'processing'].includes(r.status)).length;
+  const activeCount = records.filter(r => r.status === 'processing').length;
   const totalCount = records.length;
 
   if (loading) {
@@ -225,7 +221,7 @@ interface RecordRowProps {
 }
 
 function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps) {
-  const isClickable = ['matched', 'needs_review', 'processing', 'uploaded', 'queued'].includes(record.status);
+  const isClickable = ['matched', 'needs_review', 'processing'].includes(record.status);
 
   return (
     <div
