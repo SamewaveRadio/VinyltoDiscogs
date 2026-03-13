@@ -73,7 +73,7 @@ export default function Settings() {
   return (
     <div>
       <div className="border-b border-black px-4 py-3 lg:px-8 lg:py-4">
-        <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Settings</h1>
+        <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Connect Discogs</h1>
       </div>
 
       <div className="px-4 py-6 lg:px-8 lg:py-8 lg:max-w-md">
@@ -112,10 +112,25 @@ export default function Settings() {
             </div>
           </div>
 
-          <p className="text-[9px] text-neutral-400 mb-4 leading-relaxed">
-            Your Discogs personal access token is required to add records to your collection.
-            Find it at discogs.com/settings/developers.
-          </p>
+          <div className="text-[9px] text-neutral-400 mb-4 leading-relaxed space-y-2">
+            <p>A personal access token lets V2D add records directly to your Discogs collection.</p>
+            <ol className="list-decimal list-inside space-y-1 text-neutral-500">
+              <li>
+                Go to{' '}
+                <a
+                  href="https://www.discogs.com/settings/developers"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline text-black hover:text-neutral-600 transition-colors"
+                >
+                  discogs.com/settings/developers
+                </a>
+              </li>
+              <li>Click <span className="font-semibold text-neutral-600">Generate new token</span></li>
+              <li>Copy the token and paste it in the field above</li>
+            </ol>
+            <p>Your token is encrypted and stored securely. It is never exposed in the browser.</p>
+          </div>
 
           <button
             onClick={handleSave}

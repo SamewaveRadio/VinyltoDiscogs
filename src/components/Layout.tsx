@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { LayoutGrid, Upload, GitMerge, AlertTriangle, Settings as SettingsIcon, LogOut } from 'lucide-react';
+import { LayoutGrid, Upload, GitMerge, AlertTriangle, Disc, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
@@ -15,7 +15,7 @@ const NAV_ITEMS: { screen: Screen; label: string; icon: React.ElementType }[] = 
   { screen: 'upload',       label: 'New',      icon: Upload },
   { screen: 'match-review', label: 'Matches',  icon: GitMerge },
   { screen: 'needs-review', label: 'Review',   icon: AlertTriangle },
-  { screen: 'settings',     label: 'Settings', icon: SettingsIcon },
+  { screen: 'settings',     label: 'Discogs',  icon: Disc },
 ];
 
 export default function Layout({ children, currentScreen, onNavigate }: LayoutProps) {
