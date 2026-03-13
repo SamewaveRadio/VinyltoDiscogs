@@ -116,12 +116,17 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       return;
     }
 
-    const { error: fnError } = await supabase.functions.invoke('process-record', {
+    const { data: fnData, error: fnError } = await supabase.functions.invoke('process-record', {
       body: { record_id: record.id },
     });
 
     if (fnError) {
-      setError(`Failed to start processing: ${fnError.message}`);
+      let detail = fnError.message;
+      try {
+        const body = fnData ?? (await (fnError as any).context?.json?.());
+        if (body?.error) detail = body.error;
+      } catch {}
+      setError(`Failed to start processing: ${detail}`);
       setSubmitting(false);
       return;
     }
