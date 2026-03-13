@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
-import { Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Loader2, Plus, RotateCcw, Trash2, Square, Play, StopCircle, CheckSquare } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { VinylRecord, RecordStatus } from '../types';
+import { useBatchProcessor } from '../hooks/useBatchProcessor';
 
 type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
 
@@ -11,6 +12,8 @@ interface QueueDashboardProps {
 }
 
 const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dotPulse?: boolean }> = {
+  uploaded:     { label: 'Uploaded',     badgeClass: 'border-neutral-200 text-neutral-400' },
+  queued:       { label: 'Queued',       badgeClass: 'border-neutral-300 text-neutral-500' },
   processing:   { label: 'Processing',   badgeClass: 'border-neutral-400 text-neutral-600', dotPulse: true },
   matched:      { label: 'Matched',      badgeClass: 'border-black text-black' },
   needs_review: { label: 'Needs Review', badgeClass: 'border-neutral-700 text-neutral-700' },
@@ -18,7 +21,7 @@ const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dot
   failed:       { label: 'Failed',       badgeClass: 'border-black bg-black text-white' },
 };
 
-const STATUS_ORDER: RecordStatus[] = ['processing', 'needs_review', 'matched', 'added', 'failed'];
+const ACTIVE_STATUS_ORDER: RecordStatus[] = ['processing', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
 
 interface RecordWithThumb extends VinylRecord {
   thumbUrl?: string;
@@ -29,6 +32,9 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   const [records, setRecords] = useState<RecordWithThumb[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const { progress, processRecords, stopBatch } = useBatchProcessor();
 
   const buildThumbMap = async (recs: VinylRecord[]) => {
     if (recs.length === 0) return {};
@@ -108,6 +114,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     setDeletingId(recordId);
     await supabase.from('records').delete().eq('id', recordId);
     setRecords(prev => prev.filter(r => r.id !== recordId));
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(recordId); return n; });
     setDeletingId(null);
   };
 
@@ -117,12 +124,47 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     else if (record.status === 'processing') onNavigate('processing', record.id);
   };
 
-  const grouped = STATUS_ORDER.reduce((acc, status) => {
-    acc[status] = records.filter(r => r.status === status);
-    return acc;
-  }, {} as Record<RecordStatus, RecordWithThumb[]>);
+  const queuedRecords = useMemo(() => records.filter(r => r.status === 'queued'), [records]);
+  const activeRecords = useMemo(() => {
+    const grouped: Record<RecordStatus, RecordWithThumb[]> = {} as any;
+    ACTIVE_STATUS_ORDER.forEach(s => { grouped[s] = []; });
+    records.forEach(r => { if (r.status !== 'queued' && grouped[r.status]) grouped[r.status].push(r); });
+    return grouped;
+  }, [records]);
 
-  const activeCount = records.filter(r => r.status === 'processing').length;
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === queuedRecords.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(queuedRecords.map(r => r.id)));
+    }
+  };
+
+  const handleProcessSelected = () => {
+    const ids = queuedRecords.filter(r => selectedIds.has(r.id)).map(r => r.id);
+    const titles: Record<string, string> = {};
+    queuedRecords.forEach(r => { titles[r.id] = [r.artist, r.title].filter(Boolean).join(' / ') || 'Untitled'; });
+    processRecords(ids, titles);
+    setSelectedIds(new Set());
+  };
+
+  const handleProcessAll = () => {
+    const ids = queuedRecords.map(r => r.id);
+    const titles: Record<string, string> = {};
+    queuedRecords.forEach(r => { titles[r.id] = [r.artist, r.title].filter(Boolean).join(' / ') || 'Untitled'; });
+    processRecords(ids, titles);
+    setSelectedIds(new Set());
+  };
+
+  const processingCount = records.filter(r => r.status === 'processing').length;
   const totalCount = records.length;
 
   if (loading) {
@@ -139,10 +181,10 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
         <div className="flex items-baseline gap-2 lg:gap-4 min-w-0">
           <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black shrink-0">Queue</h1>
           <span className="text-[10px] text-neutral-400 uppercase tracking-wider shrink-0">{totalCount}</span>
-          {activeCount > 0 && (
+          {processingCount > 0 && (
             <span className="flex items-center gap-1 text-[10px] text-neutral-500 uppercase tracking-wider shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-neutral-400 animate-pulse" />
-              {activeCount} active
+              {processingCount} active
             </span>
           )}
         </div>
@@ -169,6 +211,21 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
         </div>
       ) : (
         <div>
+          {(queuedRecords.length > 0 || progress.running) && (
+            <QueuedSection
+              records={queuedRecords}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onToggleSelectAll={toggleSelectAll}
+              onProcessSelected={handleProcessSelected}
+              onProcessAll={handleProcessAll}
+              onDelete={handleDelete}
+              deletingId={deletingId}
+              progress={progress}
+              onStopBatch={stopBatch}
+            />
+          )}
+
           <div className="hidden lg:grid grid-cols-[40px_1fr_130px_100px_80px_90px_36px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
             <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400" />
             <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Artist / Title</p>
@@ -179,8 +236,8 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
             <p />
           </div>
 
-          {STATUS_ORDER.map((status) => {
-            const statusRecords = grouped[status];
+          {ACTIVE_STATUS_ORDER.map((status) => {
+            const statusRecords = activeRecords[status];
             if (!statusRecords || statusRecords.length === 0) return null;
             return statusRecords.map((record) => (
               <RecordRow
@@ -198,6 +255,216 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   );
 }
 
+interface QueuedSectionProps {
+  records: RecordWithThumb[];
+  selectedIds: Set<string>;
+  onToggleSelect: (id: string) => void;
+  onToggleSelectAll: () => void;
+  onProcessSelected: () => void;
+  onProcessAll: () => void;
+  onDelete: (e: React.MouseEvent, id: string) => void;
+  deletingId: string | null;
+  progress: ReturnType<typeof useBatchProcessor>['progress'];
+  onStopBatch: () => void;
+}
+
+function QueuedSection({
+  records, selectedIds, onToggleSelect, onToggleSelectAll,
+  onProcessSelected, onProcessAll, onDelete, deletingId,
+  progress, onStopBatch,
+}: QueuedSectionProps) {
+  const allSelected = records.length > 0 && selectedIds.size === records.length;
+
+  return (
+    <div className="border-b border-black">
+      <div className="px-4 py-2 bg-neutral-50 border-b border-neutral-200 lg:px-8">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <p className="text-[9px] uppercase tracking-widest font-semibold text-black">
+              Queued --- {records.length}
+            </p>
+            {selectedIds.size > 0 && (
+              <p className="text-[9px] uppercase tracking-widest text-neutral-400">
+                {selectedIds.size} selected
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {!progress.running && records.length > 0 && (
+              <>
+                <button
+                  onClick={onToggleSelectAll}
+                  className="p-1.5 text-neutral-400 hover:text-black transition-colors"
+                  title={allSelected ? 'Deselect all' : 'Select all'}
+                >
+                  {allSelected ? <CheckSquare className="w-3.5 h-3.5" /> : <Square className="w-3.5 h-3.5" />}
+                </button>
+                {selectedIds.size > 0 && (
+                  <button
+                    onClick={onProcessSelected}
+                    className="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-widest border border-black text-black hover:bg-black hover:text-white transition-colors"
+                  >
+                    <Play className="w-3 h-3" />
+                    Process {selectedIds.size}
+                  </button>
+                )}
+                <button
+                  onClick={onProcessAll}
+                  className="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-widest bg-black text-white hover:bg-neutral-800 transition-colors"
+                >
+                  <Play className="w-3 h-3" />
+                  All
+                </button>
+              </>
+            )}
+            {progress.running && (
+              <button
+                onClick={onStopBatch}
+                className="flex items-center gap-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-widest border border-black text-black hover:bg-black hover:text-white transition-colors"
+              >
+                <StopCircle className="w-3 h-3" />
+                Stop
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {progress.running && (
+        <div className="px-4 py-3 border-b border-neutral-200 bg-white lg:px-8">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-semibold text-black">
+              Processing {progress.currentIndex + 1} of {progress.total}
+            </p>
+            <div className="flex items-center gap-3 text-[9px] uppercase tracking-widest">
+              {progress.completed > 0 && <span className="text-neutral-500">{progress.completed} done</span>}
+              {progress.failed > 0 && <span className="text-neutral-500">{progress.failed} failed</span>}
+            </div>
+          </div>
+          {progress.currentTitle && (
+            <p className="text-[10px] text-neutral-500 truncate">{progress.currentTitle}</p>
+          )}
+          <div className="mt-2 h-1 bg-neutral-100 overflow-hidden">
+            <div
+              className="h-full bg-black transition-all duration-500"
+              style={{ width: `${((progress.completed + progress.failed) / progress.total) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {records.map((record) => (
+        <QueuedRow
+          key={record.id}
+          record={record}
+          isSelected={selectedIds.has(record.id)}
+          onToggle={() => onToggleSelect(record.id)}
+          onDelete={onDelete}
+          isDeleting={deletingId === record.id}
+          disabled={progress.running}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface QueuedRowProps {
+  record: RecordWithThumb;
+  isSelected: boolean;
+  onToggle: () => void;
+  onDelete: (e: React.MouseEvent, id: string) => void;
+  isDeleting: boolean;
+  disabled: boolean;
+}
+
+function QueuedRow({ record, isSelected, onToggle, onDelete, isDeleting, disabled }: QueuedRowProps) {
+  return (
+    <>
+      <div
+        onClick={disabled ? undefined : onToggle}
+        className={`flex items-center gap-3 px-4 py-3 border-b border-neutral-100 lg:hidden ${
+          disabled ? '' : 'cursor-pointer active:bg-neutral-50'
+        } ${isSelected ? 'bg-neutral-50' : ''}`}
+      >
+        <div className={`w-4 h-4 border flex items-center justify-center shrink-0 ${isSelected ? 'border-black' : 'border-neutral-300'}`}>
+          {isSelected && <div className="w-2.5 h-2.5 bg-black" />}
+        </div>
+        <div className="w-10 h-10 border border-neutral-200 overflow-hidden bg-neutral-50 shrink-0">
+          {record.thumbUrl ? (
+            <img src={record.thumbUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-neutral-100" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-xs font-medium text-black truncate">{record.artist ?? '---'}</span>
+            {record.title && (
+              <>
+                <span className="text-neutral-300 text-xs shrink-0">/</span>
+                <span className="text-xs text-neutral-600 truncate">{record.title}</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <StatusBadge status="queued" />
+            {record.label && <span className="text-[10px] text-neutral-400 truncate">{record.label}</span>}
+          </div>
+        </div>
+        <button
+          onClick={(e) => onDelete(e, record.id)}
+          disabled={isDeleting}
+          className="p-2 text-neutral-300 hover:text-black transition-colors shrink-0"
+        >
+          {isDeleting ? <RotateCcw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+
+      <div
+        onClick={disabled ? undefined : onToggle}
+        className={`hidden lg:grid grid-cols-[20px_40px_1fr_130px_100px_80px_90px_36px] items-center px-8 py-2.5 border-b border-neutral-100 group transition-colors ${
+          disabled ? '' : 'cursor-pointer hover:bg-neutral-50'
+        } ${isSelected ? 'bg-neutral-50' : ''}`}
+      >
+        <div className={`w-3.5 h-3.5 border flex items-center justify-center shrink-0 ${isSelected ? 'border-black' : 'border-neutral-300'}`}>
+          {isSelected && <div className="w-2 h-2 bg-black" />}
+        </div>
+        <div className="w-7 h-7 border border-neutral-200 overflow-hidden bg-neutral-50 shrink-0">
+          {record.thumbUrl ? (
+            <img src={record.thumbUrl} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full bg-neutral-100" />
+          )}
+        </div>
+        <div className="min-w-0 pr-4">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span className="text-xs font-medium text-black truncate">{record.artist ?? '---'}</span>
+            {record.title && (
+              <>
+                <span className="text-neutral-300 text-xs shrink-0">/</span>
+                <span className="text-xs text-neutral-600 truncate">{record.title}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '---'}</div>
+        <div className="text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '---'}</div>
+        <div className="text-[11px] text-neutral-500">{record.year ?? '---'}</div>
+        <div><StatusBadge status="queued" /></div>
+        <div className="flex justify-end">
+          <button
+            onClick={(e) => onDelete(e, record.id)}
+            disabled={isDeleting}
+            className="p-1 text-neutral-200 hover:text-black transition-colors opacity-0 group-hover:opacity-100"
+          >
+            {isDeleting ? <RotateCcw className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function StatusBadge({ status }: { status: RecordStatus }) {
   const meta = STATUS_META[status];
   return (
@@ -207,6 +474,7 @@ function StatusBadge({ status }: { status: RecordStatus }) {
         status === 'added'        ? 'bg-neutral-300' :
         status === 'matched'      ? 'bg-black' :
         status === 'needs_review' ? 'bg-neutral-700' :
+        status === 'queued'       ? 'bg-neutral-400' :
         'bg-neutral-400'
       } ${meta.dotPulse ? 'animate-pulse' : ''}`} />
       {meta.label}
@@ -241,7 +509,7 @@ function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps)
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-xs font-medium text-black truncate">{record.artist ?? '—'}</span>
+            <span className="text-xs font-medium text-black truncate">{record.artist ?? '---'}</span>
             {record.title && (
               <>
                 <span className="text-neutral-300 text-xs shrink-0">/</span>
@@ -283,7 +551,7 @@ function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps)
         </div>
         <div className="min-w-0 pr-4">
           <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-xs font-medium text-black truncate">{record.artist ?? '—'}</span>
+            <span className="text-xs font-medium text-black truncate">{record.artist ?? '---'}</span>
             {record.title && (
               <>
                 <span className="text-neutral-300 text-xs shrink-0">/</span>
@@ -295,9 +563,9 @@ function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps)
             <p className="text-[10px] text-neutral-400 mt-0.5 truncate">{record.error_message}</p>
           )}
         </div>
-        <div className="text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '—'}</div>
-        <div className="text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '—'}</div>
-        <div className="text-[11px] text-neutral-500">{record.year ?? '—'}</div>
+        <div className="text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '---'}</div>
+        <div className="text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '---'}</div>
+        <div className="text-[11px] text-neutral-500">{record.year ?? '---'}</div>
         <div><StatusBadge status={record.status} /></div>
         <div className="flex justify-end">
           <button

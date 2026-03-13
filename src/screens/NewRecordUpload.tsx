@@ -19,8 +19,8 @@ interface PhotoSlot {
 const photoSlots: PhotoSlot[] = [
   { type: 'cover_front', label: 'Cover Front', shortLabel: 'A' },
   { type: 'cover_back', label: 'Cover Back', shortLabel: 'B' },
-  { type: 'label_a', label: 'Label — Side A', shortLabel: 'C' },
-  { type: 'label_b', label: 'Label — Side B', shortLabel: 'D' },
+  { type: 'label_a', label: 'Label --- Side A', shortLabel: 'C' },
+  { type: 'label_b', label: 'Label --- Side B', shortLabel: 'D' },
 ];
 
 interface UploadedFile {
@@ -31,11 +31,15 @@ interface UploadedFile {
   url?: string;
 }
 
+type SubmitAction = 'process' | 'queue';
+
 export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
   const { user } = useAuth();
   const [uploads, setUploads] = useState<Partial<Record<PhotoType, UploadedFile>>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitAction, setSubmitAction] = useState<SubmitAction | null>(null);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState<SubmitAction | null>(null);
   const [dragOver, setDragOver] = useState<PhotoType | null>(null);
   const fileInputRefs = useRef<Partial<Record<PhotoType, HTMLInputElement>>>({});
 
@@ -77,18 +81,15 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
     if (fileInputRefs.current[type]) fileInputRefs.current[type]!.value = '';
   };
 
-  const handleSubmit = async () => {
-    if (!user) return;
+  const createRecordAndPhotos = async () => {
+    if (!user) throw new Error('Not authenticated');
 
     const uploadedPhotos = Object.entries(uploads).filter(
       ([, v]) => v?.uploaded && v.url
     ) as [PhotoType, UploadedFile & { url: string }][];
 
-    if (uploadedPhotos.length === 0) { setError('Add at least one photo.'); return; }
-    if (Object.values(uploads).some(u => u?.uploading)) { setError('Wait for uploads to complete.'); return; }
-
-    setSubmitting(true);
-    setError('');
+    if (uploadedPhotos.length === 0) throw new Error('Add at least one photo.');
+    if (Object.values(uploads).some(u => u?.uploading)) throw new Error('Wait for uploads to complete.');
 
     const { data: record, error: recordError } = await supabase
       .from('records')
@@ -96,11 +97,7 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       .select()
       .single();
 
-    if (recordError || !record) {
-      setError(recordError?.message ?? 'Failed to create record.');
-      setSubmitting(false);
-      return;
-    }
+    if (recordError || !record) throw new Error(recordError?.message ?? 'Failed to create record.');
 
     const { error: photosError } = await supabase
       .from('record_photos')
@@ -110,45 +107,112 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
         file_url: upload.url,
       })));
 
-    if (photosError) {
-      setError(photosError.message ?? 'Failed to save photos.');
-      setSubmitting(false);
-      return;
-    }
+    if (photosError) throw new Error(photosError.message ?? 'Failed to save photos.');
 
-    const { data: session } = await supabase.auth.getSession();
-    const accessToken = session?.session?.access_token;
-
-    if (!accessToken) {
-      setError('You must be logged in to process records.');
-      setSubmitting(false);
-      return;
-    }
-
-    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enqueue-record`;
-    const enqueueRes = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ record_id: record.id }),
-    });
-
-    if (!enqueueRes.ok) {
-      const body = await enqueueRes.json().catch(() => ({}));
-      setError(body.error || `Processing failed (${enqueueRes.status})`);
-      setSubmitting(false);
-      return;
-    }
-
-    setSubmitting(false);
-    onNavigate('processing', record.id);
+    return record;
   };
+
+  const handleProcessNow = async () => {
+    setSubmitting(true);
+    setSubmitAction('process');
+    setError('');
+
+    try {
+      const record = await createRecordAndPhotos();
+
+      const { data: session } = await supabase.auth.getSession();
+      const accessToken = session?.session?.access_token;
+      if (!accessToken) throw new Error('You must be logged in to process records.');
+
+      const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enqueue-record`;
+      const enqueueRes = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ record_id: record.id }),
+      });
+
+      if (!enqueueRes.ok) {
+        const body = await enqueueRes.json().catch(() => ({}));
+        throw new Error(body.error || `Processing failed (${enqueueRes.status})`);
+      }
+
+      setSubmitting(false);
+      setSubmitAction(null);
+      onNavigate('processing', record.id);
+    } catch (err: any) {
+      setError(err.message);
+      setSubmitting(false);
+      setSubmitAction(null);
+    }
+  };
+
+  const handleAddToQueue = async () => {
+    setSubmitting(true);
+    setSubmitAction('queue');
+    setError('');
+
+    try {
+      const record = await createRecordAndPhotos();
+
+      await supabase
+        .from('records')
+        .update({ status: 'queued' })
+        .eq('id', record.id);
+
+      setSubmitting(false);
+      setSubmitAction(null);
+      setSuccess('queue');
+    } catch (err: any) {
+      setError(err.message);
+      setSubmitting(false);
+      setSubmitAction(null);
+    }
+  };
+
+  const resetForm = () => {
+    Object.values(uploads).forEach(u => { if (u?.preview) URL.revokeObjectURL(u.preview); });
+    setUploads({});
+    setSuccess(null);
+    setError('');
+  };
+
+  if (success === 'queue') {
+    return (
+      <div className="flex flex-col items-center justify-center px-4 py-16 lg:py-24">
+        <div className="w-full max-w-sm border border-black">
+          <div className="border-b border-black px-4 py-3 bg-black">
+            <p className="text-[9px] uppercase tracking-widest font-semibold text-white">Added to Queue</p>
+          </div>
+          <div className="px-4 py-5 border-b border-black">
+            <p className="text-xs text-neutral-600">Record has been saved and added to the processing queue.</p>
+          </div>
+          <div className="flex flex-col sm:flex-row">
+            <button
+              onClick={() => onNavigate('dashboard')}
+              className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-50 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r"
+            >
+              Go to Queue
+            </button>
+            <button
+              onClick={resetForm}
+              className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest bg-black text-white hover:bg-neutral-800 transition-colors flex items-center justify-center gap-1.5"
+            >
+              <Plus className="w-3 h-3" />
+              Add Another Record
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const uploadedCount = Object.values(uploads).filter(u => u?.uploaded).length;
   const uploadingCount = Object.values(uploads).filter(u => u?.uploading).length;
+  const canSubmit = !submitting && uploadedCount > 0 && uploadingCount === 0;
 
   return (
     <div>
@@ -266,14 +330,25 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
             Cancel
           </button>
           <button
-            onClick={handleSubmit}
-            disabled={submitting || uploadedCount === 0 || uploadingCount > 0}
-            className="flex items-center justify-center gap-2 px-5 py-3 bg-black text-white text-[10px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors lg:py-2"
+            onClick={handleAddToQueue}
+            disabled={!canSubmit}
+            className="flex items-center justify-center gap-2 px-5 py-3 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black disabled:opacity-40 disabled:cursor-not-allowed transition-colors border-b border-black lg:border-b-0 lg:border-r lg:py-2"
           >
-            {submitting ? (
+            {submitting && submitAction === 'queue' ? (
               <><Loader2 className="w-3 h-3 animate-spin" /> Saving</>
             ) : (
-              'Process Record'
+              'Add to Queue'
+            )}
+          </button>
+          <button
+            onClick={handleProcessNow}
+            disabled={!canSubmit}
+            className="flex items-center justify-center gap-2 px-5 py-3 bg-black text-white text-[10px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors lg:py-2"
+          >
+            {submitting && submitAction === 'process' ? (
+              <><Loader2 className="w-3 h-3 animate-spin" /> Processing</>
+            ) : (
+              'Process Now'
             )}
           </button>
         </div>

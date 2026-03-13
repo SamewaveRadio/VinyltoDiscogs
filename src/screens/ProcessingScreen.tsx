@@ -200,7 +200,13 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   onClick={() => onNavigate('dashboard')}
                   className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r sm:py-2"
                 >
-                  Back to Dashboard
+                  Back to Queue
+                </button>
+                <button
+                  onClick={() => onNavigate('upload')}
+                  className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r sm:py-2"
+                >
+                  Scan Next
                 </button>
                 <button
                   onClick={() => onNavigate('needs-review', recordId)}

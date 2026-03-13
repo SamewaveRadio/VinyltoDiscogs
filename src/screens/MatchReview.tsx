@@ -1,48 +1,16 @@
 import { useEffect, useState } from 'react';
-import {
-  ArrowLeft, CheckCircle2, Loader2, ExternalLink,
-  ChevronDown, ChevronUp, AlertTriangle, Plus, RefreshCw, Eye
-} from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, Plus } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { VinylRecord, DiscogsCandidate, RecordPhoto } from '../types';
+import MatchDetailView from '../components/MatchDetailView';
+import ConfidenceBadge from '../components/ConfidenceBadge';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings' | 'success';
+type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
 
 interface MatchReviewProps {
   onNavigate: (screen: Screen, recordId?: string) => void;
   recordId: string | null;
-}
-
-type ConfidenceTier = 'strong' | 'review' | 'low';
-
-function getConfidenceTier(score: number): ConfidenceTier {
-  if (score >= 80) return 'strong';
-  if (score >= 50) return 'review';
-  return 'low';
-}
-
-function ConfidenceBadge({ score }: { score: number }) {
-  const tier = getConfidenceTier(score);
-  if (tier === 'strong') {
-    return (
-      <span className="text-[9px] font-semibold uppercase tracking-widest text-black border border-black px-1.5 py-0.5">
-        Strong Match
-      </span>
-    );
-  }
-  if (tier === 'review') {
-    return (
-      <span className="text-[9px] font-semibold uppercase tracking-widest text-neutral-500 border border-neutral-400 px-1.5 py-0.5">
-        Review Recommended
-      </span>
-    );
-  }
-  return (
-    <span className="text-[9px] font-semibold uppercase tracking-widest text-neutral-400 border border-neutral-300 px-1.5 py-0.5">
-      Low Confidence
-    </span>
-  );
 }
 
 export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) {
@@ -52,19 +20,8 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
   const [selectedRecord, setSelectedRecord] = useState<VinylRecord | null>(null);
   const [candidates, setCandidates] = useState<DiscogsCandidate[]>([]);
   const [photos, setPhotos] = useState<RecordPhoto[]>([]);
-  const [chosenCandidateId, setChosenCandidateId] = useState<string | null>(null);
-  const [activePhotoUrl, setActivePhotoUrl] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
   const [addedRecord, setAddedRecord] = useState<VinylRecord | null>(null);
   const [addedCandidate, setAddedCandidate] = useState<DiscogsCandidate | null>(null);
-
-  const [editingMeta, setEditingMeta] = useState(false);
-  const [metaEdits, setMetaEdits] = useState({ artist: '', title: '', label: '', catalog_number: '', year: '' });
-  const [retrying, setRetrying] = useState(false);
-  const [retryError, setRetryError] = useState<string | null>(null);
-
-  const [showLowConfWarning, setShowLowConfWarning] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -88,166 +45,27 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
 
   const openRecord = async (record: VinylRecord) => {
     setSelectedRecord(record);
-    setAddError(null);
     setAddedRecord(null);
     setAddedCandidate(null);
-    setEditingMeta(false);
-    setRetryError(null);
-    setShowLowConfWarning(false);
-    setMetaEdits({
-      artist: record.artist ?? '',
-      title: record.title ?? '',
-      label: record.label ?? '',
-      catalog_number: record.catalog_number ?? '',
-      year: record.year ? String(record.year) : '',
-    });
 
     const [{ data: cands }, { data: ph }] = await Promise.all([
       supabase.from('discogs_candidates').select('*').eq('record_id', record.id).order('score', { ascending: false }),
       supabase.from('record_photos').select('*').eq('record_id', record.id),
     ]);
 
-    const candidateList = cands ?? [];
-    setCandidates(candidateList);
+    setCandidates(cands ?? []);
     setPhotos(ph ?? []);
-    if (ph && ph.length > 0) setActivePhotoUrl(ph[0].file_url);
-
-    const preSelected = candidateList.find(c => c.is_selected);
-    const topCandidate = preSelected ?? candidateList[0] ?? null;
-    setChosenCandidateId(topCandidate?.id ?? null);
-
-    if (topCandidate && getConfidenceTier(topCandidate.score) === 'low') {
-      setShowLowConfWarning(true);
-    }
   };
 
-  const handleAddToDiscogs = async () => {
-    if (!selectedRecord || !chosenCandidateId) return;
-    const candidate = candidates.find(c => c.id === chosenCandidateId);
-    if (!candidate) return;
-
-    setAdding(true);
-    setAddError(null);
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-    const response = await fetch(`${supabaseUrl}/functions/v1/add-to-discogs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`,
-        'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({
-        record_id: selectedRecord.id,
-        release_id: candidate.discogs_release_id,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      setAddError(result.error ?? 'Failed to add to Discogs.');
-      setAdding(false);
-      return;
-    }
-
-    setAdding(false);
-    setAddedRecord(selectedRecord);
+  const handleRecordAdded = (record: VinylRecord, candidate: DiscogsCandidate) => {
+    setAddedRecord(record);
     setAddedCandidate(candidate);
-    setRecords(prev => prev.filter(r => r.id !== selectedRecord.id));
+    setRecords(prev => prev.filter(r => r.id !== record.id));
   };
 
-  const handleConfirmOnly = async () => {
-    if (!selectedRecord || !chosenCandidateId) return;
-    const candidate = candidates.find(c => c.id === chosenCandidateId);
-    if (!candidate) return;
-
-    await supabase.from('discogs_candidates').update({ is_selected: false }).eq('record_id', selectedRecord.id);
-    await supabase.from('discogs_candidates').update({ is_selected: true }).eq('id', candidate.id);
-    await supabase.from('records').update({
-      status: 'added',
-      selected_release_id: candidate.discogs_release_id,
-      selected_release_title: candidate.title,
-      selected_release_score: candidate.score,
-    }).eq('id', selectedRecord.id);
-
-    setAddedRecord(selectedRecord);
-    setAddedCandidate(candidate);
-    setRecords(prev => prev.filter(r => r.id !== selectedRecord.id));
-  };
-
-  const handleSendToReview = async () => {
-    if (!selectedRecord) return;
-    await supabase.from('records').update({ status: 'needs_review' }).eq('id', selectedRecord.id);
-    setRecords(prev => prev.filter(r => r.id !== selectedRecord.id));
+  const handleRecordRemoved = (recordId: string) => {
+    setRecords(prev => prev.filter(r => r.id !== recordId));
     setSelectedRecord(null);
-    onNavigate('needs-review', selectedRecord.id);
-  };
-
-  const handleRetrySearch = async () => {
-    if (!selectedRecord) return;
-    setRetrying(true);
-    setRetryError(null);
-
-    const { data: { session } } = await supabase.auth.getSession();
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-    const response = await fetch(`${supabaseUrl}/functions/v1/search-discogs`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`,
-        'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({
-        record_id: selectedRecord.id,
-        artist: metaEdits.artist || null,
-        title: metaEdits.title || null,
-        label: metaEdits.label || null,
-        catalog_number: metaEdits.catalog_number || null,
-        year: metaEdits.year || null,
-      }),
-    });
-
-    const result = await response.json();
-
-    if (!response.ok) {
-      setRetryError(result.error ?? 'Search failed.');
-      setRetrying(false);
-      return;
-    }
-
-    const yearNum = metaEdits.year ? parseInt(metaEdits.year, 10) : null;
-    const updatedRecord: VinylRecord = {
-      ...selectedRecord,
-      artist: metaEdits.artist || null,
-      title: metaEdits.title || null,
-      label: metaEdits.label || null,
-      catalog_number: metaEdits.catalog_number || null,
-      year: yearNum && !isNaN(yearNum) ? yearNum : null,
-      status: result.status,
-    };
-
-    const { data: newCands } = await supabase
-      .from('discogs_candidates')
-      .select('*')
-      .eq('record_id', selectedRecord.id)
-      .order('score', { ascending: false });
-
-    const candidateList = newCands ?? [];
-    setCandidates(candidateList);
-    setSelectedRecord(updatedRecord);
-    setEditingMeta(false);
-    setRetrying(false);
-    setShowLowConfWarning(false);
-
-    const top = candidateList[0] ?? null;
-    setChosenCandidateId(top?.id ?? null);
-    if (top && getConfidenceTier(top.score) === 'low') {
-      setShowLowConfWarning(true);
-    }
   };
 
   if (loading) {
@@ -267,8 +85,6 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
           setAddedRecord(null);
           setAddedCandidate(null);
           setSelectedRecord(null);
-          setCandidates([]);
-          setPhotos([]);
           onNavigate('upload');
         }}
         onBackToQueue={() => {
@@ -281,312 +97,80 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
     );
   }
 
-  if (!selectedRecord) {
+  if (selectedRecord) {
     return (
-      <div>
-        <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
-          <button onClick={() => onNavigate('dashboard')} className="text-neutral-400 hover:text-black transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div className="flex items-baseline gap-2 lg:gap-4">
-            <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Match Review</h1>
-            <span className="text-[10px] text-neutral-400 uppercase tracking-wider">{records.length} pending</span>
-          </div>
-        </div>
-
-        {records.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 lg:py-32">
-            <CheckCircle2 className="w-6 h-6 text-neutral-300 mb-3" strokeWidth={1} />
-            <p className="text-[10px] uppercase tracking-widest text-neutral-400">No matches pending</p>
-          </div>
-        ) : (
-          <div>
-            <div className="hidden lg:grid grid-cols-[1fr_120px_100px_70px_130px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Artist / Title</p>
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Label</p>
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Cat No.</p>
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Year</p>
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Confidence</p>
-            </div>
-            {records.map((record) => (
-              <div
-                key={record.id}
-                onClick={() => openRecord(record)}
-                className="px-4 py-3 border-b border-neutral-100 cursor-pointer active:bg-neutral-50 lg:grid lg:grid-cols-[1fr_120px_100px_70px_130px] lg:items-center lg:px-8 lg:hover:bg-neutral-50 transition-colors"
-              >
-                <div className="min-w-0 lg:pr-4">
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xs font-medium text-black truncate">{record.artist ?? '—'}</span>
-                    {record.title && (
-                      <><span className="text-neutral-300 text-xs shrink-0">/</span>
-                        <span className="text-xs text-neutral-600 truncate">{record.title}</span></>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 mt-1 lg:hidden">
-                    {record.confidence !== null && record.confidence !== undefined && (
-                      <ConfidenceBadge score={record.confidence} />
-                    )}
-                    {record.label && <span className="text-[10px] text-neutral-400 truncate">{record.label}</span>}
-                  </div>
-                </div>
-                <div className="hidden lg:block text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '—'}</div>
-                <div className="hidden lg:block text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '—'}</div>
-                <div className="hidden lg:block text-[11px] text-neutral-500">{record.year ?? '—'}</div>
-                <div className="hidden lg:block">
-                  {record.confidence !== null && record.confidence !== undefined && (
-                    <ConfidenceBadge score={record.confidence} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <MatchDetailView
+        record={selectedRecord}
+        candidates={candidates}
+        photos={photos}
+        setCandidates={setCandidates}
+        setSelectedRecord={setSelectedRecord}
+        onRecordAdded={handleRecordAdded}
+        onRecordRemoved={handleRecordRemoved}
+        onNavigate={onNavigate}
+      />
     );
   }
 
-  const chosenCandidate = candidates.find(c => c.id === chosenCandidateId);
-
   return (
-    <div className="flex flex-col">
+    <div>
       <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
-        <button onClick={() => setSelectedRecord(null)} className="text-neutral-400 hover:text-black transition-colors">
+        <button onClick={() => onNavigate('dashboard')} className="text-neutral-400 hover:text-black transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
-        <div className="flex items-baseline gap-2 min-w-0 flex-1 lg:gap-4">
-          <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black shrink-0">Review</h1>
-          <span className="text-[10px] text-neutral-400 uppercase tracking-wider truncate hidden sm:inline">
-            {selectedRecord.artist ?? '—'} / {selectedRecord.title ?? 'Untitled'}
-          </span>
-        </div>
-        <div className="hidden lg:flex items-center gap-0 border border-black shrink-0">
-          <button
-            onClick={handleSendToReview}
-            className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-r border-black flex items-center gap-1.5"
-          >
-            <AlertTriangle className="w-3 h-3" />
-            Needs Review
-          </button>
-          <button
-            onClick={handleConfirmOnly}
-            disabled={!chosenCandidate}
-            className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-r border-black disabled:opacity-40"
-          >
-            Confirm Only
-          </button>
-          <button
-            onClick={handleAddToDiscogs}
-            disabled={!chosenCandidate || adding}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {adding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-            Add to Discogs
-          </button>
+        <div className="flex items-baseline gap-2 lg:gap-4">
+          <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black">Match Review</h1>
+          <span className="text-[10px] text-neutral-400 uppercase tracking-wider">{records.length} pending</span>
         </div>
       </div>
 
-      {addError && (
-        <div className="border-b border-black px-4 py-2 bg-neutral-50 flex items-center gap-2 lg:px-8">
-          <XCircleIcon className="w-3 h-3 text-black shrink-0" />
-          <p className="text-[10px] text-black">{addError}</p>
+      {records.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 lg:py-32">
+          <CheckCircle2 className="w-6 h-6 text-neutral-300 mb-3" strokeWidth={1} />
+          <p className="text-[10px] uppercase tracking-widest text-neutral-400">No matches pending</p>
         </div>
-      )}
-
-      {showLowConfWarning && (
-        <div className="border-b border-neutral-300 px-4 py-2 bg-neutral-50 flex items-center justify-between lg:px-8">
-          <div className="flex items-center gap-2 min-w-0">
-            <AlertTriangle className="w-3 h-3 text-neutral-500 shrink-0" />
-            <p className="text-[10px] text-neutral-600 truncate">
-              Low confidence. Consider editing metadata and retrying.
-            </p>
+      ) : (
+        <div>
+          <div className="hidden lg:grid grid-cols-[1fr_120px_100px_70px_130px] px-8 py-2 border-b border-neutral-200 bg-neutral-50">
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Artist / Title</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Label</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Cat No.</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Year</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Confidence</p>
           </div>
-          <button
-            onClick={() => setShowLowConfWarning(false)}
-            className="text-neutral-400 hover:text-black text-[9px] uppercase tracking-widest ml-2 shrink-0"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-y-auto lg:flex lg:overflow-hidden" style={{ minHeight: 0 }}>
-        <div className="lg:w-72 lg:border-r lg:border-black lg:flex lg:flex-col lg:shrink-0 lg:overflow-y-auto">
-          <div className="border-b border-black px-4 py-2 bg-neutral-50">
-            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Photos</p>
-          </div>
-
-          <div className="p-4 border-b border-black">
-            <div className="flex gap-2 lg:flex-col lg:gap-3">
-              {activePhotoUrl ? (
-                <div className="w-24 h-24 bg-neutral-100 border border-neutral-200 shrink-0 lg:w-full lg:h-auto lg:aspect-square">
-                  <img src={activePhotoUrl} alt="Active" className="w-full h-full object-cover" />
+          {records.map((record) => (
+            <div
+              key={record.id}
+              onClick={() => openRecord(record)}
+              className="px-4 py-3 border-b border-neutral-100 cursor-pointer active:bg-neutral-50 lg:grid lg:grid-cols-[1fr_120px_100px_70px_130px] lg:items-center lg:px-8 lg:hover:bg-neutral-50 transition-colors"
+            >
+              <div className="min-w-0 lg:pr-4">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-medium text-black truncate">{record.artist ?? '---'}</span>
+                  {record.title && (
+                    <><span className="text-neutral-300 text-xs shrink-0">/</span>
+                      <span className="text-xs text-neutral-600 truncate">{record.title}</span></>
+                  )}
                 </div>
-              ) : (
-                <div className="w-24 h-24 bg-neutral-50 border border-neutral-200 flex items-center justify-center shrink-0 lg:w-full lg:h-auto lg:aspect-square">
-                  <p className="text-[9px] uppercase tracking-widest text-neutral-300">No photo</p>
+                <div className="flex items-center gap-2 mt-1 lg:hidden">
+                  {record.confidence !== null && record.confidence !== undefined && (
+                    <ConfidenceBadge score={record.confidence} />
+                  )}
+                  {record.label && <span className="text-[10px] text-neutral-400 truncate">{record.label}</span>}
                 </div>
-              )}
-              {photos.length > 1 && (
-                <div className="flex flex-wrap gap-1.5 items-start">
-                  {photos.map((photo) => (
-                    <button
-                      key={photo.id}
-                      onClick={() => setActivePhotoUrl(photo.file_url)}
-                      className={`w-10 h-10 border overflow-hidden transition-colors shrink-0 ${activePhotoUrl === photo.file_url ? 'border-black' : 'border-neutral-200 hover:border-neutral-400'}`}
-                    >
-                      <img src={photo.file_url} alt={photo.photo_type} className="w-full h-full object-cover" />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="px-4 py-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Extracted Metadata</p>
-              <button
-                onClick={() => { setEditingMeta(!editingMeta); setRetryError(null); }}
-                className="text-[9px] uppercase tracking-widest text-neutral-400 hover:text-black transition-colors"
-              >
-                {editingMeta ? 'Cancel' : 'Edit'}
-              </button>
-            </div>
-
-            {editingMeta ? (
-              <div>
-                <div className="border border-black mb-2">
-                  {[
-                    { key: 'artist', label: 'Artist' },
-                    { key: 'title', label: 'Title' },
-                    { key: 'label', label: 'Label' },
-                    { key: 'catalog_number', label: 'Cat No.' },
-                    { key: 'year', label: 'Year' },
-                  ].map(({ key, label }, i) => (
-                    <div key={key} className={`flex items-center ${i < 4 ? 'border-b border-neutral-200' : ''}`}>
-                      <div className="w-16 px-2 py-2 border-r border-neutral-200 bg-neutral-50 shrink-0 sm:w-20 lg:w-16 lg:py-1.5">
-                        <p className="text-[8px] uppercase tracking-widest font-medium text-neutral-500">{label}</p>
-                      </div>
-                      <input
-                        type={key === 'year' ? 'number' : 'text'}
-                        value={metaEdits[key as keyof typeof metaEdits]}
-                        onChange={(e) => setMetaEdits(prev => ({ ...prev, [key]: e.target.value }))}
-                        className="flex-1 px-2 py-2 text-xs text-black bg-white focus:outline-none placeholder:text-neutral-300 lg:py-1.5 lg:text-[11px]"
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                {retryError && (
-                  <p className="text-[9px] text-neutral-500 mb-2">{retryError}</p>
-                )}
-
-                <button
-                  onClick={handleRetrySearch}
-                  disabled={retrying}
-                  className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors border border-black lg:py-1.5"
-                >
-                  {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {retrying ? 'Searching...' : 'Retry Search'}
-                </button>
               </div>
-            ) : (
-              <div className="space-y-2">
-                {[
-                  { label: 'Artist', value: selectedRecord.artist },
-                  { label: 'Title', value: selectedRecord.title },
-                  { label: 'Label', value: selectedRecord.label },
-                  { label: 'Cat No.', value: selectedRecord.catalog_number },
-                  { label: 'Year', value: selectedRecord.year?.toString() },
-                ].map(({ label, value }) => (
-                  <div key={label} className="grid grid-cols-[52px_1fr] gap-2 items-baseline">
-                    <span className="text-[9px] uppercase tracking-wider text-neutral-400">{label}</span>
-                    <span className="text-[11px] text-black font-medium truncate">{value ?? '—'}</span>
-                  </div>
-                ))}
-                {selectedRecord.confidence !== null && selectedRecord.confidence !== undefined && (
-                  <div className="pt-2 border-t border-neutral-100">
-                    <ConfidenceBadge score={selectedRecord.confidence} />
-                  </div>
+              <div className="hidden lg:block text-[11px] text-neutral-500 truncate pr-2">{record.label ?? '---'}</div>
+              <div className="hidden lg:block text-[11px] text-neutral-500 font-mono truncate pr-2">{record.catalog_number ?? '---'}</div>
+              <div className="hidden lg:block text-[11px] text-neutral-500">{record.year ?? '---'}</div>
+              <div className="hidden lg:block">
+                {record.confidence !== null && record.confidence !== undefined && (
+                  <ConfidenceBadge score={record.confidence} />
                 )}
               </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="border-b border-black px-4 py-2 bg-neutral-50 flex items-center justify-between lg:px-6">
-            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">
-              Candidates — {candidates.length}
-            </p>
-            {chosenCandidate && (
-              <p className="text-[9px] uppercase tracking-widest text-neutral-500 truncate ml-2 hidden sm:block max-w-[200px] lg:max-w-xs">
-                Selected: {chosenCandidate.title}
-              </p>
-            )}
-          </div>
-
-          <div className="hidden lg:block border-b border-neutral-100 px-6 py-1.5 bg-neutral-50">
-            <div className="grid grid-cols-[20px_1fr_80px_70px_70px_60px_50px_60px_44px]">
-              <p className="text-[8px] uppercase tracking-widest text-neutral-300" />
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Title / Label</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Cat No.</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Year</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Country</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Format</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400">Score</p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-400 flex items-center gap-0.5">
-                <Eye className="w-2.5 h-2.5" /> Visual
-              </p>
-              <p className="text-[8px] uppercase tracking-widest text-neutral-300" />
             </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto">
-            {candidates.length === 0 ? (
-              <div className="flex items-center justify-center py-16 lg:py-20">
-                <p className="text-[10px] uppercase tracking-widest text-neutral-400">No candidates found</p>
-              </div>
-            ) : (
-              candidates.map((candidate) => (
-                <CandidateRow
-                  key={candidate.id}
-                  candidate={candidate}
-                  isChosen={chosenCandidateId === candidate.id}
-                  onSelect={() => setChosenCandidateId(candidate.id)}
-                />
-              ))
-            )}
-          </div>
+          ))}
         </div>
-      </div>
-
-      <div className="lg:hidden border-t border-black bg-white sticky bottom-16 z-40">
-        <div className="flex">
-          <button
-            onClick={handleSendToReview}
-            className="flex-1 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 active:bg-neutral-100 border-r border-black flex items-center justify-center gap-1.5"
-          >
-            <AlertTriangle className="w-3 h-3" />
-            Review
-          </button>
-          <button
-            onClick={handleConfirmOnly}
-            disabled={!chosenCandidate}
-            className="flex-1 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 active:bg-neutral-100 border-r border-black disabled:opacity-40"
-          >
-            Confirm
-          </button>
-          <button
-            onClick={handleAddToDiscogs}
-            disabled={!chosenCandidate || adding}
-            className="flex-1 flex items-center justify-center gap-1.5 py-3 bg-black text-white text-[9px] font-semibold uppercase tracking-widest disabled:opacity-40"
-          >
-            {adding ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-            Add
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -609,21 +193,21 @@ function SuccessView({ record, candidate, onScanNext, onBackToQueue }: SuccessVi
           <div>
             <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Artist / Title</p>
             <p className="text-sm font-medium text-black">
-              {record.artist ?? '—'}{record.title ? ` / ${record.title}` : ''}
+              {record.artist ?? '---'}{record.title ? ` / ${record.title}` : ''}
             </p>
           </div>
           <div className="grid grid-cols-3 gap-3 lg:gap-4">
             <div>
               <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Label</p>
-              <p className="text-xs text-black font-medium truncate">{candidate.label ?? '—'}</p>
+              <p className="text-xs text-black font-medium truncate">{candidate.label ?? '---'}</p>
             </div>
             <div>
               <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Cat No.</p>
-              <p className="text-xs text-black font-mono truncate">{candidate.catno ?? '—'}</p>
+              <p className="text-xs text-black font-mono truncate">{candidate.catno ?? '---'}</p>
             </div>
             <div>
               <p className="text-[9px] uppercase tracking-widest text-neutral-400 mb-1">Year</p>
-              <p className="text-xs text-black font-medium">{candidate.year ?? '—'}</p>
+              <p className="text-xs text-black font-medium">{candidate.year ?? '---'}</p>
             </div>
           </div>
           {candidate.score !== undefined && (
@@ -648,146 +232,6 @@ function SuccessView({ record, candidate, onScanNext, onBackToQueue }: SuccessVi
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function XCircleIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-      <circle cx="12" cy="12" r="10" />
-      <line x1="15" y1="9" x2="9" y2="15" />
-      <line x1="9" y1="9" x2="15" y2="15" />
-    </svg>
-  );
-}
-
-interface CandidateRowProps {
-  candidate: DiscogsCandidate;
-  isChosen: boolean;
-  onSelect: () => void;
-}
-
-function CandidateRow({ candidate, isChosen, onSelect }: CandidateRowProps) {
-  const [expanded, setExpanded] = useState(false);
-  const discogsUrl = `https://www.discogs.com/release/${candidate.discogs_release_id}`;
-
-  const visualScore = candidate.visual_score;
-  const visualColor = visualScore === null
-    ? 'text-neutral-300'
-    : visualScore >= 70
-    ? isChosen ? 'text-white' : 'text-black'
-    : visualScore >= 40
-    ? isChosen ? 'text-neutral-400' : 'text-neutral-500'
-    : isChosen ? 'text-neutral-600' : 'text-neutral-400';
-
-  return (
-    <div className={`border-b border-neutral-100 transition-colors ${isChosen ? 'bg-black' : 'hover:bg-neutral-50'}`}>
-      <div
-        onClick={onSelect}
-        className="flex items-start gap-3 px-4 py-3 cursor-pointer lg:hidden"
-      >
-        <div className={`w-4 h-4 border flex items-center justify-center shrink-0 mt-0.5 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
-          {isChosen && <div className="w-2.5 h-2.5 bg-white" />}
-        </div>
-        <div className="flex-1 min-w-0">
-          <span className={`text-xs font-medium block truncate ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.title ?? '—'}</span>
-          {candidate.label && (
-            <span className={`text-[10px] block truncate mt-0.5 ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.label}</span>
-          )}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
-            {candidate.catno && <span className={`text-[10px] font-mono ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.catno}</span>}
-            {candidate.year && <span className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.year}</span>}
-            {candidate.country && <span className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.country}</span>}
-            {candidate.format && <span className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.format}</span>}
-          </div>
-          <div className="flex items-center gap-3 mt-1.5">
-            <span className={`text-[10px] font-semibold ${isChosen ? 'text-white' : 'text-black'}`}>Score: {candidate.score}</span>
-            {visualScore !== null && (
-              <span className={`text-[10px] font-medium ${visualColor}`}>Visual: {visualScore}%</span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <a
-            href={discogsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className={`p-1 transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-300 hover:text-black'}`}
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-          <button
-            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-            className={`p-1 transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-300 hover:text-black'}`}
-          >
-            {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-      </div>
-
-      <div
-        onClick={onSelect}
-        className="hidden lg:grid grid-cols-[20px_1fr_80px_70px_70px_60px_50px_60px_44px] items-center px-6 py-3 cursor-pointer"
-      >
-        <div className={`w-3.5 h-3.5 border flex items-center justify-center shrink-0 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
-          {isChosen && <div className="w-2 h-2 bg-white" />}
-        </div>
-        <div className="min-w-0 pr-3">
-          <span className={`text-[11px] font-medium truncate block ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.title ?? '—'}</span>
-          {candidate.label && (
-            <span className={`text-[10px] truncate block mt-0.5 ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.label}</span>
-          )}
-        </div>
-        <div className={`text-[10px] font-mono truncate pr-2 ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.catno ?? '—'}</div>
-        <div className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.year ?? '—'}</div>
-        <div className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.country ?? '—'}</div>
-        <div className={`text-[10px] ${isChosen ? 'text-neutral-400' : 'text-neutral-500'}`}>{candidate.format ?? '—'}</div>
-        <div className={`text-[10px] font-semibold ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.score}</div>
-        <div className={`text-[10px] font-medium ${visualColor}`}>
-          {visualScore !== null ? `${visualScore}%` : '—'}
-        </div>
-        <div className="flex items-center gap-2 justify-end">
-          <a
-            href={discogsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className={`transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-300 hover:text-black'}`}
-          >
-            <ExternalLink className="w-3 h-3" />
-          </a>
-          <button
-            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded); }}
-            className={`transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-300 hover:text-black'}`}
-          >
-            {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-          </button>
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="px-4 pb-3 space-y-2 lg:px-6">
-          {candidate.reasons_json && candidate.reasons_json.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {candidate.reasons_json.map((reason, i) => (
-                <span
-                  key={i}
-                  className={`text-[9px] uppercase tracking-widest px-2 py-0.5 border ${isChosen ? 'border-neutral-700 text-neutral-400' : 'border-neutral-200 text-neutral-500'}`}
-                >
-                  {reason}
-                </span>
-              ))}
-            </div>
-          )}
-          {candidate.visual_reason && (
-            <p className={`text-[10px] italic ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
-              Visual: {candidate.visual_reason}
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }
