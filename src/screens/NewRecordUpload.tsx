@@ -116,22 +116,12 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       return;
     }
 
-    const { data: { session } } = await supabase.auth.getSession();
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-
-    const response = await fetch(`${supabaseUrl}/functions/v1/process-record`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token}`,
-        'Apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-      },
-      body: JSON.stringify({ record_id: record.id }),
+    const { error: fnError } = await supabase.functions.invoke('process-record', {
+      body: { record_id: record.id },
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      setError(`Processing failed: ${errorText}`);
+    if (fnError) {
+      setError(`Failed to start processing: ${fnError.message}`);
       setSubmitting(false);
       return;
     }
