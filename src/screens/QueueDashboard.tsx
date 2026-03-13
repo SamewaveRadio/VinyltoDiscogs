@@ -21,7 +21,8 @@ const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dot
   failed:       { label: 'Failed',       badgeClass: 'border-black bg-black text-white' },
 };
 
-const ACTIVE_STATUS_ORDER: RecordStatus[] = ['processing', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
+const ACTIVE_STATUS_ORDER: RecordStatus[] = ['processing', 'needs_review', 'matched', 'added', 'failed'];
+const QUEUED_STATUSES: RecordStatus[] = ['queued', 'uploaded'];
 
 interface RecordWithThumb extends VinylRecord {
   thumbUrl?: string;
@@ -124,11 +125,11 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     else if (record.status === 'processing') onNavigate('processing', record.id);
   };
 
-  const queuedRecords = useMemo(() => records.filter(r => r.status === 'queued'), [records]);
+  const queuedRecords = useMemo(() => records.filter(r => QUEUED_STATUSES.includes(r.status)), [records]);
   const activeRecords = useMemo(() => {
     const grouped: Record<RecordStatus, RecordWithThumb[]> = {} as any;
     ACTIVE_STATUS_ORDER.forEach(s => { grouped[s] = []; });
-    records.forEach(r => { if (r.status !== 'queued' && grouped[r.status]) grouped[r.status].push(r); });
+    records.forEach(r => { if (!QUEUED_STATUSES.includes(r.status) && grouped[r.status]) grouped[r.status].push(r); });
     return grouped;
   }, [records]);
 
