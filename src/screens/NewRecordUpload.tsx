@@ -92,7 +92,7 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
 
     const { data: record, error: recordError } = await supabase
       .from('records')
-      .insert({ user_id: user.id, status: 'processing' })
+      .insert({ user_id: user.id, status: 'uploaded' })
       .select()
       .single();
 
@@ -116,17 +116,29 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       return;
     }
 
-    const { data: fnData, error: fnError } = await supabase.functions.invoke('process-record', {
-      body: { record_id: record.id },
+    const { data: session } = await supabase.auth.getSession();
+    const accessToken = session?.session?.access_token;
+
+    if (!accessToken) {
+      setError('You must be logged in to process records.');
+      setSubmitting(false);
+      return;
+    }
+
+    const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enqueue-record`;
+    const enqueueRes = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ record_id: record.id }),
     });
 
-    if (fnError) {
-      let detail = fnError.message;
-      try {
-        const body = fnData ?? (await (fnError as any).context?.json?.());
-        if (body?.error) detail = body.error;
-      } catch {}
-      setError(`Failed to start processing: ${detail}`);
+    if (!enqueueRes.ok) {
+      const body = await enqueueRes.json().catch(() => ({}));
+      setError(body.error || `Processing failed (${enqueueRes.status})`);
       setSubmitting(false);
       return;
     }
