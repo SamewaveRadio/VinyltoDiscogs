@@ -17,7 +17,7 @@ export default function Settings() {
     if (!user) return;
     (async () => {
       const { data } = await supabase
-        .from('user_profiles')
+        .from('users')
         .select('*')
         .eq('id', user.id)
         .maybeSingle();

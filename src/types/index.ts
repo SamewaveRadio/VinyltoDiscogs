@@ -1,4 +1,4 @@
-export type RecordStatus = 'processing' | 'matched' | 'needs_review' | 'added' | 'failed';
+export type RecordStatus = 'queued' | 'uploaded' | 'processing' | 'matched' | 'needs_review' | 'added' | 'failed';
 export type PhotoType = 'cover_front' | 'cover_back' | 'label_a' | 'label_b';
 
 export interface UserProfile {
