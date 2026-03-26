@@ -41,14 +41,6 @@ export function useBatchProcessor() {
       currentTitle: recordTitles[recordIds[0]] ?? null,
     });
 
-    const { data: sessionData } = await supabase.auth.getSession();
-    const accessToken = sessionData?.session?.access_token;
-
-    if (!accessToken) {
-      setProgress(prev => ({ ...prev, running: false }));
-      return;
-    }
-
     let completed = 0;
     let failed = 0;
 
@@ -65,18 +57,16 @@ export function useBatchProcessor() {
       }));
 
       try {
-        const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/enqueue-record`;
-        const res = await fetch(apiUrl, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
-          },
-          body: JSON.stringify({ record_id: recordId }),
+        await supabase
+          .from('records')
+          .update({ status: 'processing' })
+          .eq('id', recordId);
+
+        const { error: fnError } = await supabase.functions.invoke('process-record', {
+          body: { record_id: recordId },
         });
 
-        if (!res.ok) {
+        if (fnError) {
           failed++;
         } else {
           const pollResult = await pollUntilDone(recordId);
