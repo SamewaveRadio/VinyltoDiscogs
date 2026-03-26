@@ -20,7 +20,7 @@ const STATUS_META: Record<RecordStatus, { label: string; badgeClass: string; dot
   failed:       { label: 'Failed',       badgeClass: 'border-black bg-black text-white' },
 };
 
-const STATUS_ORDER: RecordStatus[] = ['processing', 'needs_review', 'matched', 'added', 'failed'];
+const STATUS_ORDER: RecordStatus[] = ['processing', 'queued', 'uploaded', 'needs_review', 'matched', 'added', 'failed'];
 
 interface RecordWithThumb extends VinylRecord {
   thumbUrl?: string;
@@ -116,7 +116,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
   const handleRowClick = (record: RecordWithThumb) => {
     if (record.status === 'matched') onNavigate('match-review', record.id);
     else if (record.status === 'needs_review') onNavigate('needs-review', record.id);
-    else if (record.status === 'processing') onNavigate('processing', record.id);
+    else if (record.status === 'processing' || record.status === 'queued') onNavigate('processing', record.id);
   };
 
   const sortedRecords = useMemo(() => {
@@ -126,7 +126,7 @@ export default function QueueDashboard({ onNavigate }: QueueDashboardProps) {
     return grouped;
   }, [records]);
 
-  const processingCount = records.filter(r => r.status === 'processing').length;
+  const processingCount = records.filter(r => r.status === 'processing' || r.status === 'queued').length;
   const totalCount = records.length;
 
   if (loading) {
@@ -226,7 +226,7 @@ interface RecordRowProps {
 }
 
 function RecordRow({ record, onRowClick, onDelete, isDeleting }: RecordRowProps) {
-  const isClickable = ['matched', 'needs_review', 'processing'].includes(record.status);
+  const isClickable = ['matched', 'needs_review', 'processing', 'queued'].includes(record.status);
 
   return (
     <>
