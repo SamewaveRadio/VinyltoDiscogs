@@ -214,52 +214,84 @@ Return ONLY valid JSON with no markdown:
   }
 }
 
+async function failRecord(
+  supabase: ReturnType<typeof createClient>,
+  recordId: string,
+  errorMessage: string
+) {
+  console.error(`[process-record] FAILED record=${recordId}: ${errorMessage}`);
+  await supabase.from("records").update({
+    status: "failed",
+    error_message: errorMessage,
+  }).eq("id", recordId);
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
+  const discogsAppToken = Deno.env.get("DISCOGS_TOKEN");
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  let recordId: string | undefined;
+
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const openaiApiKey = Deno.env.get("OPENAI_API_KEY");
-    const discogsAppToken = Deno.env.get("DISCOGS_TOKEN");
+    const body = await req.json();
+    recordId = body.record_id;
+  } catch (err) {
+    console.error("[process-record] Failed to parse request body:", err);
+    return new Response(
+      JSON.stringify({ error: "Invalid request body" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  if (!recordId) {
+    return new Response(
+      JSON.stringify({ error: "record_id is required" }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
-    const { record_id } = await req.json();
-    if (!record_id) {
-      return new Response(JSON.stringify({ error: "record_id is required" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+  console.log(`[process-record] START record=${recordId}`);
 
-    await supabase.from("records").update({ status: "processing" }).eq("id", record_id);
+  await supabase.from("records").update({ status: "processing" }).eq("id", recordId);
 
-    const { data: photos, error: photosError } = await supabase
+  // --- Step 1: Fetch record photos ---
+  console.log(`[process-record] Fetching record photos record=${recordId}`);
+  let photos: { file_url: string; photo_type: string }[];
+  try {
+    const { data, error: photosError } = await supabase
       .from("record_photos")
       .select("*")
-      .eq("record_id", record_id);
+      .eq("record_id", recordId);
 
-    if (photosError || !photos || photos.length === 0) {
-      await supabase.from("records").update({
-        status: "failed",
-        error_message: "No photos found for this record",
-      }).eq("id", record_id);
-      return new Response(JSON.stringify({ error: "No photos found" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (photosError) throw new Error(photosError.message);
+    if (!data || data.length === 0) throw new Error("No photos found for this record");
+    photos = data;
+    console.log(`[process-record] Fetched ${photos.length} photos record=${recordId}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, msg);
+    return new Response(
+      JSON.stringify({ error: msg }),
+      { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
+  // --- Fetch user's Discogs token ---
+  let userDiscogsToken = discogsAppToken;
+  try {
     const { data: record } = await supabase
       .from("records")
       .select("user_id")
-      .eq("id", record_id)
+      .eq("id", recordId)
       .maybeSingle();
 
-    let userDiscogsToken = discogsAppToken;
     if (record?.user_id) {
       const { data: userProfile } = await supabase
         .from("users")
@@ -274,16 +306,22 @@ Deno.serve(async (req: Request) => {
         }
       }
     }
+  } catch (err) {
+    console.error(`[process-record] Error fetching discogs token, using app token: ${err}`);
+  }
 
-    let metadata: ExtractedMetadata = {
-      artist: null,
-      title: null,
-      label: null,
-      catalog_number: null,
-      year: null,
-      confidence: 0,
-    };
+  // --- Step 2: OpenAI metadata extraction ---
+  console.log(`[process-record] Starting OpenAI metadata extraction record=${recordId}`);
+  let metadata: ExtractedMetadata = {
+    artist: null,
+    title: null,
+    label: null,
+    catalog_number: null,
+    year: null,
+    confidence: 0,
+  };
 
+  try {
     if (openaiApiKey) {
       const imageContents = photos.slice(0, 4).map((photo) => ({
         type: "image_url",
@@ -323,24 +361,23 @@ Focus on the record labels (sides A and B) for catalog number and label informat
         }),
       });
 
-      if (visionResponse.ok) {
-        const visionData = await visionResponse.json();
-        const content = visionData.choices?.[0]?.message?.content ?? "";
-        const cleanContent = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        try {
-          const parsed = JSON.parse(cleanContent);
-          metadata = {
-            artist: parsed.artist ?? null,
-            title: parsed.title ?? null,
-            label: parsed.label ?? null,
-            catalog_number: parsed.catalog_number ?? null,
-            year: parsed.year ? parseInt(String(parsed.year)) : null,
-            confidence: parsed.confidence ?? 50,
-          };
-        } catch {
-          metadata.confidence = 20;
-        }
+      if (!visionResponse.ok) {
+        const errText = await visionResponse.text();
+        throw new Error(`OpenAI API returned ${visionResponse.status}: ${errText}`);
       }
+
+      const visionData = await visionResponse.json();
+      const content = visionData.choices?.[0]?.message?.content ?? "";
+      const cleanContent = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const parsed = JSON.parse(cleanContent);
+      metadata = {
+        artist: parsed.artist ?? null,
+        title: parsed.title ?? null,
+        label: parsed.label ?? null,
+        catalog_number: parsed.catalog_number ?? null,
+        year: parsed.year ? parseInt(String(parsed.year)) : null,
+        confidence: parsed.confidence ?? 50,
+      };
     } else {
       metadata = {
         artist: "Unknown Artist",
@@ -351,7 +388,19 @@ Focus on the record labels (sides A and B) for catalog number and label informat
         confidence: 0,
       };
     }
+    console.log(`[process-record] OpenAI metadata extraction completed record=${recordId} confidence=${metadata.confidence}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, `Metadata extraction failed: ${msg}`);
+    return new Response(
+      JSON.stringify({ error: `Metadata extraction failed: ${msg}` }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
+  // --- Step 3: Save partial metadata to record ---
+  console.log(`[process-record] Saving partial metadata record=${recordId}`);
+  try {
     await supabase.from("records").update({
       artist: metadata.artist,
       title: metadata.title,
@@ -359,14 +408,20 @@ Focus on the record labels (sides A and B) for catalog number and label informat
       catalog_number: metadata.catalog_number,
       year: metadata.year,
       confidence: metadata.confidence,
-    }).eq("id", record_id);
+    }).eq("id", recordId);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, `Failed to save metadata: ${msg}`);
+    return new Response(
+      JSON.stringify({ error: `Failed to save metadata: ${msg}` }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
-    const searchTerms: string[] = [];
-    if (metadata.artist) searchTerms.push(metadata.artist);
-    if (metadata.title) searchTerms.push(metadata.title);
-
-    let candidates: DiscogsResult[] = [];
-
+  // --- Step 4: Discogs search ---
+  console.log(`[process-record] Starting Discogs search record=${recordId}`);
+  let candidates: DiscogsResult[] = [];
+  try {
     if (userDiscogsToken) {
       const searchParams = new URLSearchParams();
       searchParams.set("type", "release");
@@ -391,6 +446,10 @@ Focus on the record labels (sides A and B) for catalog number and label informat
         candidates = discogsData.results ?? [];
       }
 
+      const searchTerms: string[] = [];
+      if (metadata.artist) searchTerms.push(metadata.artist);
+      if (metadata.title) searchTerms.push(metadata.title);
+
       if (candidates.length === 0 && searchTerms.length > 0) {
         const fallbackParams = new URLSearchParams();
         fallbackParams.set("type", "release");
@@ -413,7 +472,28 @@ Focus on the record labels (sides A and B) for catalog number and label informat
         }
       }
     }
+    console.log(`[process-record] Discogs search completed record=${recordId} candidates=${candidates.length}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, `Discogs search failed: ${msg}`);
+    return new Response(
+      JSON.stringify({ error: `Discogs search failed: ${msg}` }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
+  // --- Step 5: Ranking ---
+  console.log(`[process-record] Starting ranking record=${recordId}`);
+  interface VisualResult {
+    result: DiscogsResult;
+    score: number;
+    reasons: string[];
+    visual_score: number | null;
+    visual_reason: string | null;
+  }
+
+  let visuallyScored: VisualResult[] = [];
+  try {
     const textScored = candidates
       .map((result) => {
         const { score, reasons } = scoreCandidate(result, metadata);
@@ -428,16 +508,6 @@ Focus on the record labels (sides A and B) for catalog number and label informat
 
     const top5 = textScored.slice(0, 5);
     const rest = textScored.slice(5);
-
-    interface VisualResult {
-      result: DiscogsResult;
-      score: number;
-      reasons: string[];
-      visual_score: number | null;
-      visual_reason: string | null;
-    }
-
-    let visuallyScored: VisualResult[] = [];
 
     if (openaiApiKey && userDiscogsToken && uploadedPhotoUrl && top5.length > 0) {
       const visualResults = await Promise.all(
@@ -472,12 +542,24 @@ Focus on the record labels (sides A and B) for catalog number and label informat
         result, score, reasons, visual_score: null, visual_reason: null,
       }));
     }
+    console.log(`[process-record] Ranking completed record=${recordId} scored=${visuallyScored.length}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, `Ranking failed: ${msg}`);
+    return new Response(
+      JSON.stringify({ error: `Ranking failed: ${msg}` }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
+  // --- Step 6: Database writes ---
+  console.log(`[process-record] Writing results to database record=${recordId}`);
+  try {
     if (visuallyScored.length > 0) {
-      await supabase.from("discogs_candidates").delete().eq("record_id", record_id);
+      await supabase.from("discogs_candidates").delete().eq("record_id", recordId);
 
       const inserts = visuallyScored.map(({ result, score, reasons, visual_score, visual_reason }) => ({
-        record_id,
+        record_id: recordId,
         discogs_release_id: String(result.id),
         title: result.title ?? null,
         label: (result.label ?? [])[0] ?? null,
@@ -506,7 +588,9 @@ Focus on the record labels (sides A and B) for catalog number and label informat
     await supabase.from("records").update({
       status: finalStatus,
       error_message: errorMsg,
-    }).eq("id", record_id);
+    }).eq("id", recordId);
+
+    console.log(`[process-record] Database writes completed record=${recordId} status=${finalStatus}`);
 
     return new Response(
       JSON.stringify({
@@ -518,9 +602,10 @@ Focus on the record labels (sides A and B) for catalog number and label informat
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
-    console.error("process-record error:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    await failRecord(supabase, recordId, `Database write failed: ${msg}`);
     return new Response(
-      JSON.stringify({ error: String(err) }),
+      JSON.stringify({ error: `Database write failed: ${msg}` }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
