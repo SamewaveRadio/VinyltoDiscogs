@@ -61,29 +61,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    await serviceClient
-      .from("records")
-      .update({ status: "queued" })
-      .eq("id", record_id);
-
-    const { data: job, error: jobError } = await serviceClient
-      .from("processing_jobs")
-      .insert({
-        record_id,
-        status: "pending",
-        attempts: 0,
-      })
-      .select()
-      .single();
-
-    if (jobError) {
-      return new Response(JSON.stringify({ error: jobError.message }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const workerUrl = `${supabaseUrl}/functions/v1/process-record-queue`;
+    const workerUrl = `${supabaseUrl}/functions/v1/process-record`;
     EdgeRuntime.waitUntil(
       fetch(workerUrl, {
         method: "POST",
@@ -92,12 +70,14 @@ Deno.serve(async (req: Request) => {
           "Authorization": `Bearer ${supabaseServiceKey}`,
           "Apikey": supabaseAnonKey,
         },
-        body: JSON.stringify({ job_id: job.id }),
-      }).catch(() => {})
+        body: JSON.stringify({ record_id }),
+      }).catch((err) => {
+        console.error("Failed to trigger process-record:", err);
+      })
     );
 
     return new Response(
-      JSON.stringify({ success: true, job_id: job.id }),
+      JSON.stringify({ success: true, record_id }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {
