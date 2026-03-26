@@ -17,10 +17,10 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { id: 'process',  label: 'Processing record',    sublabel: 'Preparing record for analysis' },
-  { id: 'extract',  label: 'Extracting metadata',  sublabel: 'Reading artist, label, catalog number' },
-  { id: 'search',   label: 'Searching Discogs',    sublabel: 'Querying release database' },
-  { id: 'rank',     label: 'Ranking matches',       sublabel: 'Scoring candidates by relevance' },
+  { id: 'process',  label: 'Analyzing photos',      sublabel: 'Preparing images for visual matching' },
+  { id: 'search',   label: 'Searching Discogs',     sublabel: 'Finding candidate releases' },
+  { id: 'compare',  label: 'Visual comparison',     sublabel: 'Comparing artwork and labels side-by-side' },
+  { id: 'rank',     label: 'Ranking matches',       sublabel: 'Scoring by visual similarity' },
 ];
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
@@ -32,27 +32,28 @@ function statusToSteps(
   switch (recordStatus) {
     case 'processing': {
       const stepMap: Record<string, Record<string, StepStatus>> = {
-        extracting: { process: 'done', extract: 'active', search: 'pending', rank: 'pending' },
-        searching:  { process: 'done', extract: 'done',   search: 'active', rank: 'pending' },
-        ranking:    { process: 'done', extract: 'done',   search: 'done',   rank: 'active' },
+        analyzing:  { process: 'active', search: 'pending', compare: 'pending', rank: 'pending' },
+        searching:  { process: 'done',   search: 'active',  compare: 'pending', rank: 'pending' },
+        comparing:  { process: 'done',   search: 'done',    compare: 'active',  rank: 'pending' },
+        ranking:    { process: 'done',   search: 'done',    compare: 'done',    rank: 'active' },
       };
-      return stepMap[processingStep ?? ''] ?? { process: 'done', extract: 'active', search: 'pending', rank: 'pending' };
+      return stepMap[processingStep ?? ''] ?? { process: 'active', search: 'pending', compare: 'pending', rank: 'pending' };
     }
     case 'matched':
     case 'needs_review':
     case 'added':
-      return { process: 'done', extract: 'done', search: 'done', rank: 'done' };
+      return { process: 'done', search: 'done', compare: 'done', rank: 'done' };
     case 'failed':
-      return { process: 'done', extract: 'done', search: 'error', rank: 'pending' };
+      return { process: 'done', search: 'done', compare: 'error', rank: 'pending' };
     default:
-      return { process: 'active', extract: 'pending', search: 'pending', rank: 'pending' };
+      return { process: 'active', search: 'pending', compare: 'pending', rank: 'pending' };
   }
 }
 
 export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScreenProps) {
   const [photos, setPhotos] = useState<RecordPhoto[]>([]);
   const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>(
-    statusToSteps('processing', 'extracting')
+    statusToSteps('processing', 'analyzing')
   );
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -95,7 +96,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
         setError('Processing timed out. The record appears to be stuck. Please try again.');
         setStepStatuses(prev => {
           const active = Object.entries(prev).find(([, v]) => v === 'active');
-          if (!active) return { ...prev, extract: 'error' };
+          if (!active) return { ...prev, compare: 'error' };
           return { ...prev, [active[0]]: 'error' };
         });
         await supabase
@@ -122,7 +123,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
       setError(record.error_message ?? 'Processing failed.');
       setStepStatuses(prev => {
         const active = Object.entries(prev).find(([, v]) => v === 'active');
-        if (!active) return { ...prev, search: 'error' };
+        if (!active) return { ...prev, compare: 'error' };
         return { ...prev, [active[0]]: 'error' };
       });
     }

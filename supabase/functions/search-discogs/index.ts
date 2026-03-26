@@ -54,7 +54,6 @@ interface DiscogsResult {
   country?: string;
   format?: string[];
   thumb?: string;
-  resource_url?: string;
 }
 
 interface DiscogsImage {
@@ -65,76 +64,17 @@ interface DiscogsImage {
   height: number;
 }
 
-function scoreCandidate(
-  result: DiscogsResult,
-  artist: string | null,
-  title: string | null,
-  label: string | null,
-  catalog_number: string | null,
-  year: number | null
-): { score: number; reasons: string[] } {
-  let score = 0;
-  const reasons: string[] = [];
-
-  const normalize = (s: string | null | undefined) =>
-    (s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
-
-  const catnoNorm = normalize(catalog_number);
-  const labelNorm = normalize(label);
-  const resultCatno = normalize(result.catno);
-  const resultLabel = normalize((result.label ?? [])[0]);
-
-  const [artistPart, titlePart] = result.title.includes(" - ")
-    ? result.title.split(" - ", 2)
-    : [result.title, ""];
-
-  const artistNorm = normalize(artist);
-  const titleNorm = normalize(title);
-
-  if (catnoNorm && resultCatno && catnoNorm === resultCatno) {
-    score += 50;
-    reasons.push("catalog match");
-  } else if (catnoNorm && resultCatno && resultCatno.includes(catnoNorm)) {
-    score += 25;
-    reasons.push("partial catalog");
-  }
-
-  if (labelNorm && resultLabel && resultLabel.includes(labelNorm)) {
-    score += 20;
-    reasons.push("label match");
-  }
-
-  if (artistNorm && normalize(artistPart).includes(artistNorm)) {
-    score += 15;
-    reasons.push("artist match");
-  } else if (artistNorm && artistNorm.includes(normalize(artistPart))) {
-    score += 8;
-    reasons.push("partial artist");
-  }
-
-  if (titleNorm && normalize(titlePart).includes(titleNorm)) {
-    score += 15;
-    reasons.push("title match");
-  } else if (titleNorm && titleNorm.includes(normalize(titlePart))) {
-    score += 8;
-    reasons.push("partial title");
-  }
-
-  if (year && result.year) {
-    const resultYear = typeof result.year === "string" ? parseInt(result.year) : result.year;
-    if (resultYear === year) {
-      score += 5;
-      reasons.push("year match");
-    }
-  }
-
-  return { score, reasons };
+interface VisualComparison {
+  visual_match_score: number;
+  same_release_likelihood: string;
+  same_pressing_likelihood: string;
+  visual_reason: string;
 }
 
-async function getDiscogsReleaseImage(
+async function getDiscogsReleaseImages(
   releaseId: number,
   discogsToken: string
-): Promise<string | null> {
+): Promise<string[]> {
   try {
     const res = await fetch(`https://api.discogs.com/releases/${releaseId}`, {
       headers: {
@@ -142,69 +82,109 @@ async function getDiscogsReleaseImage(
         "User-Agent": "VinylToDiscogs/1.0",
       },
     });
-    if (!res.ok) return null;
+    if (!res.ok) return [];
     const data: { images?: DiscogsImage[] } = await res.json();
-    const primary = data.images?.find((img) => img.type === "primary") ?? data.images?.[0];
-    return primary?.uri ?? null;
+    if (!data.images || data.images.length === 0) return [];
+    return data.images.slice(0, 3).map((img) => img.uri);
   } catch {
-    return null;
+    return [];
   }
 }
 
-async function getVisualScore(
-  uploadedImageUrl: string,
-  discogsImageUrl: string,
+async function visualCompare(
+  uploadedPhotos: { file_url: string; photo_type: string }[],
+  discogsImages: string[],
   openaiApiKey: string
-): Promise<{ visual_score: number; visual_reason: string }> {
+): Promise<VisualComparison> {
+  const fallback: VisualComparison = {
+    visual_match_score: 0,
+    same_release_likelihood: "unknown",
+    same_pressing_likelihood: "unknown",
+    visual_reason: "comparison failed",
+  };
+
+  if (discogsImages.length === 0) return fallback;
+
   try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${openaiApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        max_tokens: 150,
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `You are comparing vinyl record artwork.
+    const uploadedImageParts = uploadedPhotos.slice(0, 4).map((p) => ({
+      type: "image_url" as const,
+      image_url: { url: p.file_url, detail: "low" as const },
+    }));
 
-Image A: uploaded record cover or label
-Image B: Discogs release artwork
+    const discogsImageParts = discogsImages.slice(0, 2).map((url) => ({
+      type: "image_url" as const,
+      image_url: { url, detail: "low" as const },
+    }));
 
-Evaluate whether these represent the same release.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25_000);
 
-Return ONLY valid JSON with no markdown:
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${openaiApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          max_tokens: 250,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `You are a vinyl record identification expert. Compare the UPLOADED RECORD photos (first set) against the DISCOGS CANDIDATE artwork (second set).
+
+Evaluate visual similarity across:
+- Sleeve/cover artwork design, imagery, and layout
+- Label design, color, and logo
+- Typography, color palette, layout consistency
+- Packaging and format cues
+- Any visible text is a secondary visual clue only
+
+Return ONLY valid JSON:
 {
-  "visual_match_score": number from 0 to 100,
-  "reason": "short explanation under 20 words"
-}`,
-              },
-              { type: "image_url", image_url: { url: uploadedImageUrl, detail: "low" } },
-              { type: "image_url", image_url: { url: discogsImageUrl, detail: "low" } },
-            ],
-          },
-        ],
-      }),
-    });
+  "visual_match_score": 0-100,
+  "same_release_likelihood": "very_high" | "high" | "medium" | "low" | "very_low",
+  "same_pressing_likelihood": "very_high" | "high" | "medium" | "low" | "very_low",
+  "visual_reason": "brief explanation under 25 words"
+}
 
-    if (!response.ok) return { visual_score: 0, visual_reason: "vision api error" };
+UPLOADED RECORD photos:`,
+                },
+                ...uploadedImageParts,
+                {
+                  type: "text",
+                  text: "DISCOGS CANDIDATE artwork:",
+                },
+                ...discogsImageParts,
+              ],
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content ?? "";
-    const clean = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-    const parsed = JSON.parse(clean);
-    return {
-      visual_score: Math.min(100, Math.max(0, Math.round(parsed.visual_match_score ?? 0))),
-      visual_reason: parsed.reason ?? "",
-    };
+      if (!res.ok) return fallback;
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content ?? "";
+      const clean = content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const parsed = JSON.parse(clean);
+
+      return {
+        visual_match_score: Math.min(100, Math.max(0, Math.round(parsed.visual_match_score ?? 0))),
+        same_release_likelihood: parsed.same_release_likelihood ?? "unknown",
+        same_pressing_likelihood: parsed.same_pressing_likelihood ?? "unknown",
+        visual_reason: parsed.visual_reason ?? "",
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch {
-    return { visual_score: 0, visual_reason: "comparison failed" };
+    return fallback;
   }
 }
 
@@ -284,7 +264,7 @@ Deno.serve(async (req: Request) => {
 
     const searchParams = new URLSearchParams();
     searchParams.set("type", "release");
-    searchParams.set("per_page", "25");
+    searchParams.set("per_page", "30");
     if (catalog_number) searchParams.set("catno", catalog_number);
     if (artist) searchParams.set("artist", artist);
     if (title) searchParams.set("release_title", title);
@@ -307,10 +287,10 @@ Deno.serve(async (req: Request) => {
       candidates = data.results ?? [];
     }
 
-    if (candidates.length === 0 && (artist || title)) {
+    if (candidates.length < 5 && (artist || title)) {
       const fallbackParams = new URLSearchParams();
       fallbackParams.set("type", "release");
-      fallbackParams.set("per_page", "25");
+      fallbackParams.set("per_page", "30");
       fallbackParams.set("q", [artist, title].filter(Boolean).join(" "));
 
       const fallbackRes = await fetch(
@@ -325,79 +305,71 @@ Deno.serve(async (req: Request) => {
 
       if (fallbackRes.ok) {
         const data = await fallbackRes.json();
-        candidates = data.results ?? [];
+        const existingIds = new Set(candidates.map((c) => c.id));
+        const newResults = (data.results ?? []).filter(
+          (r: DiscogsResult) => !existingIds.has(r.id)
+        );
+        candidates = [...candidates, ...newResults];
       }
     }
-
-    const textScored = candidates
-      .map((result) => {
-        const { score, reasons } = scoreCandidate(
-          result, artist ?? null, title ?? null, label ?? null,
-          catalog_number ?? null, yearNum
-        );
-        return { result, score, reasons };
-      })
-      .filter((c) => c.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
 
     const { data: photos } = await serviceClient
       .from("record_photos")
       .select("file_url, photo_type")
       .eq("record_id", record_id);
 
-    const uploadedPhotoUrl = photos?.find((p) => p.photo_type === "cover_front")?.file_url
-      ?? photos?.[0]?.file_url ?? null;
+    const uploadedPhotos = photos ?? [];
+    const topCandidates = candidates.slice(0, 8);
 
-    const top5 = textScored.slice(0, 5);
-    const rest = textScored.slice(5);
-
-    interface VisualResult {
+    interface ScoredCandidate {
       result: DiscogsResult;
-      score: number;
-      reasons: string[];
-      visual_score: number | null;
-      visual_reason: string | null;
+      visual_match_score: number;
+      same_release_likelihood: string;
+      same_pressing_likelihood: string;
+      visual_reason: string;
     }
 
-    let visuallyScored: VisualResult[] = [];
+    let scored: ScoredCandidate[] = [];
 
-    if (openaiApiKey && uploadedPhotoUrl && top5.length > 0) {
-      const visualResults = await Promise.all(
-        top5.map(async ({ result, score, reasons }) => {
-          const releaseImageUrl = await getDiscogsReleaseImage(result.id, discogsToken);
-          if (!releaseImageUrl) {
-            return { result, score, reasons, visual_score: null, visual_reason: null };
-          }
-          const { visual_score, visual_reason } = await getVisualScore(
-            uploadedPhotoUrl, releaseImageUrl, openaiApiKey
-          );
-          const visualBonus = Math.round((visual_score / 100) * 30);
-          return {
-            result,
-            score: score + visualBonus,
-            reasons: visual_score >= 60 ? [...reasons, `visual ${visual_score}%`] : reasons,
-            visual_score,
-            visual_reason,
-          };
-        })
-      );
-      visuallyScored = [
-        ...visualResults.sort((a, b) => b.score - a.score),
-        ...rest.map(({ result, score, reasons }) => ({
-          result, score, reasons, visual_score: null, visual_reason: null,
-        })),
-      ];
+    if (openaiApiKey && uploadedPhotos.length > 0 && topCandidates.length > 0) {
+      const BATCH_SIZE = 4;
+      const allResults: ScoredCandidate[] = [];
+
+      for (let i = 0; i < topCandidates.length; i += BATCH_SIZE) {
+        const batch = topCandidates.slice(i, i + BATCH_SIZE);
+        const batchResults = await Promise.all(
+          batch.map(async (candidate) => {
+            const images = await getDiscogsReleaseImages(candidate.id, discogsToken!);
+            const comparison = await visualCompare(uploadedPhotos, images, openaiApiKey);
+            return {
+              result: candidate,
+              visual_match_score: comparison.visual_match_score,
+              same_release_likelihood: comparison.same_release_likelihood,
+              same_pressing_likelihood: comparison.same_pressing_likelihood,
+              visual_reason: comparison.visual_reason,
+            };
+          })
+        );
+        allResults.push(...batchResults);
+      }
+
+      scored = allResults
+        .sort((a, b) => b.visual_match_score - a.visual_match_score)
+        .slice(0, 10);
     } else {
-      visuallyScored = textScored.map(({ result, score, reasons }) => ({
-        result, score, reasons, visual_score: null, visual_reason: null,
+      scored = topCandidates.slice(0, 10).map((result) => ({
+        result,
+        visual_match_score: 0,
+        same_release_likelihood: "unknown",
+        same_pressing_likelihood: "unknown",
+        visual_reason: "visual comparison unavailable",
       }));
     }
 
     await serviceClient.from("discogs_candidates").delete().eq("record_id", record_id);
 
-    if (visuallyScored.length > 0) {
-      const inserts = visuallyScored.map(({ result, score, reasons, visual_score, visual_reason }) => ({
+    if (scored.length > 0) {
+      const inserts = scored.map(({ result, visual_match_score, same_release_likelihood, same_pressing_likelihood, visual_reason }) => ({
         record_id,
         discogs_release_id: String(result.id),
         title: result.title ?? null,
@@ -407,20 +379,29 @@ Deno.serve(async (req: Request) => {
         country: result.country ?? null,
         format: (result.format ?? [])[0] ?? null,
         thumb_url: result.thumb ?? null,
-        score,
-        reasons_json: reasons,
-        visual_score,
+        score: visual_match_score,
+        visual_score: visual_match_score,
+        same_release_likelihood,
+        same_pressing_likelihood,
         visual_reason,
+        reasons_json: [
+          visual_match_score >= 70 ? "strong visual match" : visual_match_score >= 40 ? "partial visual match" : "weak visual match",
+          same_release_likelihood === "very_high" || same_release_likelihood === "high" ? "release likely" : null,
+          same_pressing_likelihood === "very_high" || same_pressing_likelihood === "high" ? "pressing likely" : null,
+        ].filter(Boolean),
         is_selected: false,
       }));
 
       await serviceClient.from("discogs_candidates").insert(inserts);
     }
 
-    const newStatus = visuallyScored.length > 0 ? "matched" : "needs_review";
+    const topScore = scored[0]?.visual_match_score ?? 0;
+    const newStatus = scored.length > 0 && topScore >= 30 ? "matched" : "needs_review";
+
     await serviceClient.from("records").update({
       status: newStatus,
-      error_message: visuallyScored.length === 0
+      confidence: topScore,
+      error_message: scored.length === 0
         ? "No matching releases found with updated metadata."
         : null,
     }).eq("id", record_id);
@@ -429,7 +410,8 @@ Deno.serve(async (req: Request) => {
       JSON.stringify({
         success: true,
         status: newStatus,
-        candidates_found: visuallyScored.length,
+        candidates_found: scored.length,
+        top_visual_score: topScore,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

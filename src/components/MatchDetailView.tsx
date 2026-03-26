@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import {
   ArrowLeft, Loader2, ExternalLink, AlertTriangle,
-  Plus, RefreshCw, ChevronDown, ChevronUp,
+  Plus, RefreshCw, ChevronDown, ChevronUp, Eye,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { VinylRecord, DiscogsCandidate, RecordPhoto } from '../types';
-import ConfidenceBadge, { getConfidenceTier } from './ConfidenceBadge';
+import ConfidenceBadge, { getConfidenceTier, LikelihoodBadge } from './ConfidenceBadge';
 
 type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
 
@@ -46,7 +46,9 @@ export default function MatchDetailView({
   const topCandidate = candidates[0] ?? null;
   const alternateCandidates = candidates.slice(1);
 
-  const showLowConfWarning = topCandidate && getConfidenceTier(topCandidate.score) === 'low';
+  const showLowConfWarning = topCandidate && getConfidenceTier(topCandidate.visual_score ?? topCandidate.score) === 'low';
+
+  const coverPhoto = photos.find(p => p.photo_type === 'cover_front') ?? photos[0];
 
   const handleAddToDiscogs = async () => {
     if (!chosenCandidateId) return;
@@ -89,7 +91,7 @@ export default function MatchDetailView({
       status: 'added',
       selected_release_id: candidate.discogs_release_id,
       selected_release_title: candidate.title,
-      selected_release_score: candidate.score,
+      selected_release_score: candidate.visual_score ?? candidate.score,
     }).eq('id', record.id);
 
     onRecordAdded(record, candidate);
@@ -139,13 +141,14 @@ export default function MatchDetailView({
       catalog_number: metaEdits.catalog_number || null,
       year: yearNum && !isNaN(yearNum) ? yearNum : null,
       status: result.status,
+      confidence: result.top_visual_score ?? null,
     };
 
     const { data: newCands } = await supabase
       .from('discogs_candidates')
       .select('*')
       .eq('record_id', record.id)
-      .order('score', { ascending: false });
+      .order('visual_score', { ascending: false });
 
     const candidateList = newCands ?? [];
     setCandidates(candidateList);
@@ -155,8 +158,6 @@ export default function MatchDetailView({
     setChosenCandidateId(candidateList[0]?.id ?? null);
   };
 
-  const coverPhoto = photos.find(p => p.photo_type === 'cover_front') ?? photos[0];
-
   return (
     <div className="flex flex-col">
       <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
@@ -164,7 +165,7 @@ export default function MatchDetailView({
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-baseline gap-2 min-w-0 flex-1 lg:gap-4">
-          <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black shrink-0">Review</h1>
+          <h1 className="text-xs font-semibold uppercase tracking-[0.2em] text-black shrink-0">Visual Review</h1>
           <span className="text-[10px] text-neutral-400 uppercase tracking-wider truncate hidden sm:inline">
             {record.artist ?? '---'} / {record.title ?? 'Untitled'}
           </span>
@@ -206,7 +207,7 @@ export default function MatchDetailView({
         <div className="border-b border-neutral-300 px-4 py-2 bg-neutral-50 flex items-center gap-2 lg:px-8">
           <AlertTriangle className="w-3 h-3 text-neutral-500 shrink-0" />
           <p className="text-[10px] text-neutral-600">
-            Low confidence. Consider editing metadata and retrying.
+            Low visual confidence. Consider editing search terms and retrying.
           </p>
         </div>
       )}
@@ -214,9 +215,9 @@ export default function MatchDetailView({
       <div className="flex-1 overflow-y-auto lg:flex lg:overflow-hidden" style={{ minHeight: 0 }}>
         <div className="lg:w-80 lg:border-r lg:border-black lg:flex lg:flex-col lg:shrink-0 lg:overflow-y-auto">
           <div className="p-4 border-b border-black lg:p-5">
-            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400 mb-3">Photos</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400 mb-3">Your Record</p>
             {photos.length > 0 ? (
-              <div className="grid grid-cols-4 gap-1.5 lg:grid-cols-2 lg:gap-2">
+              <div className="grid grid-cols-2 gap-1.5 lg:gap-2">
                 {photos.map((photo) => (
                   <div
                     key={photo.id}
@@ -237,7 +238,7 @@ export default function MatchDetailView({
 
           <div className="p-4 border-b border-black lg:border-b-0 lg:p-5">
             <div className="flex items-center justify-between mb-3">
-              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Extracted Metadata</p>
+              <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Search Terms</p>
               <button
                 onClick={() => { setEditingMeta(!editingMeta); setRetryError(null); }}
                 className="text-[9px] uppercase tracking-widest text-neutral-400 hover:text-black transition-colors"
@@ -273,7 +274,7 @@ export default function MatchDetailView({
                   className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-black text-white text-[9px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-50 transition-colors"
                 >
                   {retrying ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                  {retrying ? 'Searching...' : 'Retry Search'}
+                  {retrying ? 'Comparing...' : 'Retry Visual Search'}
                 </button>
               </div>
             ) : (
@@ -292,11 +293,6 @@ export default function MatchDetailView({
                     <p className="flex-1 px-2 py-1.5 text-[11px] text-black font-medium truncate min-w-0">{value ?? '---'}</p>
                   </div>
                 ))}
-                {record.confidence !== null && record.confidence !== undefined && (
-                  <div className="border-t border-neutral-100 px-2 py-2">
-                    <ConfidenceBadge score={record.confidence} />
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -306,6 +302,7 @@ export default function MatchDetailView({
           {topCandidate && (
             <TopMatchCard
               candidate={topCandidate}
+              coverPhoto={coverPhoto}
               isChosen={chosenCandidateId === topCandidate.id}
               onSelect={() => setChosenCandidateId(topCandidate.id)}
             />
@@ -369,43 +366,58 @@ export default function MatchDetailView({
   );
 }
 
-function TopMatchCard({ candidate, isChosen, onSelect }: { candidate: DiscogsCandidate; isChosen: boolean; onSelect: () => void }) {
-  const [expanded, setExpanded] = useState(false);
-  const discogsUrl = `https://www.discogs.com/release/${candidate.discogs_release_id}`;
-  const tier = getConfidenceTier(candidate.score);
+function TopMatchCard({
+  candidate, coverPhoto, isChosen, onSelect,
+}: {
+  candidate: DiscogsCandidate;
+  coverPhoto: RecordPhoto | undefined;
+  isChosen: boolean;
+  onSelect: () => void;
+}) {
+  const visualScore = candidate.visual_score ?? candidate.score;
+  const tier = getConfidenceTier(visualScore);
 
   return (
     <div className={`border-b border-black ${isChosen ? 'bg-black' : 'bg-neutral-50'}`}>
       <div className="px-4 py-2 flex items-center justify-between lg:px-6">
         <div className="flex items-center gap-2">
+          <Eye className={`w-3.5 h-3.5 ${isChosen ? 'text-white' : 'text-black'}`} />
           <p className={`text-[9px] uppercase tracking-widest font-semibold ${isChosen ? 'text-white' : 'text-black'}`}>
-            Top Match
+            Top Visual Match
           </p>
-          <ConfidenceBadge score={candidate.score} />
+          <ConfidenceBadge score={visualScore} />
         </div>
-        <div className="flex items-center gap-2">
-          <a
-            href={discogsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={`p-1 transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </div>
+        <a
+          href={`https://www.discogs.com/release/${candidate.discogs_release_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`p-1 transition-colors ${isChosen ? 'text-neutral-500 hover:text-white' : 'text-neutral-400 hover:text-black'}`}
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </a>
       </div>
 
       <div onClick={onSelect} className="px-4 pb-4 cursor-pointer lg:px-6 lg:pb-5">
+        <div className="flex gap-3 mb-4">
+          {coverPhoto && (
+            <div className={`w-20 h-20 shrink-0 border overflow-hidden bg-neutral-100 sm:w-24 sm:h-24 ${isChosen ? 'border-neutral-700' : 'border-neutral-200'}`}>
+              <img src={coverPhoto.file_url} alt="Your record" className="w-full h-full object-cover" />
+            </div>
+          )}
+          <div className={`flex items-center justify-center shrink-0 ${isChosen ? 'text-neutral-600' : 'text-neutral-300'}`}>
+            <span className="text-[9px] uppercase tracking-widest font-semibold">vs</span>
+          </div>
+          {candidate.thumb_url && (
+            <div className={`w-20 h-20 shrink-0 border overflow-hidden bg-neutral-100 sm:w-24 sm:h-24 ${isChosen ? 'border-neutral-700' : 'border-neutral-200'}`}>
+              <img src={candidate.thumb_url} alt="Discogs match" className="w-full h-full object-cover" />
+            </div>
+          )}
+        </div>
+
         <div className="flex items-start gap-3">
           <div className={`w-4 h-4 border flex items-center justify-center shrink-0 mt-0.5 ${isChosen ? 'border-white' : 'border-neutral-300'}`}>
             {isChosen && <div className="w-2.5 h-2.5 bg-white" />}
           </div>
-
-          {candidate.thumb_url && (
-            <div className={`w-16 h-16 shrink-0 border overflow-hidden bg-neutral-100 sm:w-20 sm:h-20 ${isChosen ? 'border-neutral-700' : 'border-neutral-200'}`}>
-              <img src={candidate.thumb_url} alt="" className="w-full h-full object-cover" />
-            </div>
-          )}
 
           <div className="flex-1 min-w-0">
             <p className={`text-sm font-medium truncate ${isChosen ? 'text-white' : 'text-black'}`}>
@@ -433,25 +445,16 @@ function TopMatchCard({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
               ))}
             </div>
 
-            <div className="flex items-center gap-3 mt-3">
-              <span className={`text-[10px] font-semibold ${isChosen ? 'text-white' : 'text-black'}`}>
-                Score: {candidate.score}
-              </span>
-              {candidate.visual_score !== null && (
-                <span className={`text-[10px] font-medium ${
-                  candidate.visual_score >= 70
-                    ? isChosen ? 'text-white' : 'text-black'
-                    : isChosen ? 'text-neutral-500' : 'text-neutral-500'
-                }`}>
-                  Visual: {candidate.visual_score}%
-                </span>
-              )}
-              {tier !== 'strong' && (
-                <span className={`text-[9px] uppercase tracking-widest ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
-                  {tier === 'review' ? 'Review Recommended' : 'Low Confidence'}
-                </span>
-              )}
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <LikelihoodBadge label="Release" value={candidate.same_release_likelihood} />
+              <LikelihoodBadge label="Pressing" value={candidate.same_pressing_likelihood} />
             </div>
+
+            {candidate.visual_reason && (
+              <p className={`text-[10px] italic mt-2 ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
+                {candidate.visual_reason}
+              </p>
+            )}
           </div>
         </div>
 
@@ -469,12 +472,6 @@ function TopMatchCard({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
             ))}
           </div>
         )}
-
-        {candidate.visual_reason && (
-          <p className={`text-[10px] italic mt-2 ml-7 ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
-            Visual: {candidate.visual_reason}
-          </p>
-        )}
       </div>
     </div>
   );
@@ -482,8 +479,7 @@ function TopMatchCard({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
 
 function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCandidate; isChosen: boolean; onSelect: () => void }) {
   const [expanded, setExpanded] = useState(false);
-  const discogsUrl = `https://www.discogs.com/release/${candidate.discogs_release_id}`;
-
+  const visualScore = candidate.visual_score ?? candidate.score;
   const secondaryText = isChosen ? 'text-neutral-400' : 'text-neutral-500';
 
   return (
@@ -500,7 +496,7 @@ function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 min-w-0">
             <span className={`text-xs font-medium truncate ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.title ?? '---'}</span>
-            <span className={`text-[10px] font-semibold shrink-0 ${isChosen ? 'text-white' : 'text-black'}`}>{candidate.score}</span>
+            <span className={`text-[10px] font-semibold shrink-0 ${isChosen ? 'text-white' : 'text-black'}`}>{visualScore}%</span>
           </div>
           {candidate.label && (
             <span className={`text-[10px] block truncate mt-0.5 ${secondaryText}`}>{candidate.label}</span>
@@ -514,7 +510,7 @@ function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <a
-            href={discogsUrl}
+            href={`https://www.discogs.com/release/${candidate.discogs_release_id}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
@@ -533,6 +529,10 @@ function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
 
       {expanded && (
         <div className="px-4 pb-3 ml-7 space-y-2 lg:px-6">
+          <div className="flex flex-wrap gap-1.5">
+            <LikelihoodBadge label="Release" value={candidate.same_release_likelihood} />
+            <LikelihoodBadge label="Pressing" value={candidate.same_pressing_likelihood} />
+          </div>
           {candidate.reasons_json && candidate.reasons_json.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {candidate.reasons_json.map((reason, i) => (
@@ -547,9 +547,9 @@ function CandidateRow({ candidate, isChosen, onSelect }: { candidate: DiscogsCan
               ))}
             </div>
           )}
-          {candidate.visual_score !== null && (
-            <p className={`text-[10px] ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
-              Visual: {candidate.visual_score}%{candidate.visual_reason ? ` --- ${candidate.visual_reason}` : ''}
+          {candidate.visual_reason && (
+            <p className={`text-[10px] italic ${isChosen ? 'text-neutral-500' : 'text-neutral-400'}`}>
+              {candidate.visual_reason}
             </p>
           )}
         </div>

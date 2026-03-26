@@ -49,7 +49,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
     setAddedCandidate(null);
 
     const [{ data: cands }, { data: ph }] = await Promise.all([
-      supabase.from('discogs_candidates').select('*').eq('record_id', record.id).order('score', { ascending: false }),
+      supabase.from('discogs_candidates').select('*').eq('record_id', record.id).order('visual_score', { ascending: false }),
       supabase.from('record_photos').select('*').eq('record_id', record.id),
     ]);
 
@@ -136,7 +136,7 @@ export default function MatchReview({ onNavigate, recordId }: MatchReviewProps) 
             <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Label</p>
             <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Cat No.</p>
             <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Year</p>
-            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Confidence</p>
+            <p className="text-[9px] uppercase tracking-widest font-medium text-neutral-400">Visual Match</p>
           </div>
           {records.map((record) => (
             <div

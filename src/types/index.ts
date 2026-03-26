@@ -53,6 +53,8 @@ export interface DiscogsCandidate {
   thumb_url: string | null;
   visual_score: number | null;
   visual_reason: string | null;
+  same_release_likelihood: string | null;
+  same_pressing_likelihood: string | null;
   is_selected: boolean;
   created_at: string;
 }
