@@ -31,15 +31,11 @@ interface UploadedFile {
   url?: string;
 }
 
-type SubmitAction = 'process' | 'queue';
-
 export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
   const { user } = useAuth();
   const [uploads, setUploads] = useState<Partial<Record<PhotoType, UploadedFile>>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitAction, setSubmitAction] = useState<SubmitAction | null>(null);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState<SubmitAction | null>(null);
   const [dragOver, setDragOver] = useState<PhotoType | null>(null);
   const fileInputRefs = useRef<Partial<Record<PhotoType, HTMLInputElement>>>({});
 
@@ -114,7 +110,6 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
 
   const handleProcessNow = async () => {
     setSubmitting(true);
-    setSubmitAction('process');
     setError('');
 
     try {
@@ -141,74 +136,12 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
       }
 
       setSubmitting(false);
-      setSubmitAction(null);
       onNavigate('processing', record.id);
     } catch (err: any) {
       setError(err.message);
       setSubmitting(false);
-      setSubmitAction(null);
     }
   };
-
-  const handleAddToQueue = async () => {
-    setSubmitting(true);
-    setSubmitAction('queue');
-    setError('');
-
-    try {
-      const record = await createRecordAndPhotos();
-
-      await supabase
-        .from('records')
-        .update({ status: 'queued' })
-        .eq('id', record.id);
-
-      setSubmitting(false);
-      setSubmitAction(null);
-      setSuccess('queue');
-    } catch (err: any) {
-      setError(err.message);
-      setSubmitting(false);
-      setSubmitAction(null);
-    }
-  };
-
-  const resetForm = () => {
-    Object.values(uploads).forEach(u => { if (u?.preview) URL.revokeObjectURL(u.preview); });
-    setUploads({});
-    setSuccess(null);
-    setError('');
-  };
-
-  if (success === 'queue') {
-    return (
-      <div className="flex flex-col items-center justify-center px-4 py-16 lg:py-24">
-        <div className="w-full max-w-sm border border-black">
-          <div className="border-b border-black px-4 py-3 bg-black">
-            <p className="text-[9px] uppercase tracking-widest font-semibold text-white">Added to Queue</p>
-          </div>
-          <div className="px-4 py-5 border-b border-black">
-            <p className="text-xs text-neutral-600">Record has been saved and added to the processing queue.</p>
-          </div>
-          <div className="flex flex-col sm:flex-row">
-            <button
-              onClick={() => onNavigate('dashboard')}
-              className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-50 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r"
-            >
-              Go to Queue
-            </button>
-            <button
-              onClick={resetForm}
-              className="flex-1 px-4 py-3 text-[9px] font-semibold uppercase tracking-widest bg-black text-white hover:bg-neutral-800 transition-colors flex items-center justify-center gap-1.5"
-            >
-              <Plus className="w-3 h-3" />
-              Add Another Record
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const uploadedCount = Object.values(uploads).filter(u => u?.uploaded).length;
   const uploadingCount = Object.values(uploads).filter(u => u?.uploading).length;
@@ -330,22 +263,11 @@ export default function NewRecordUpload({ onNavigate }: NewRecordUploadProps) {
             Cancel
           </button>
           <button
-            onClick={handleAddToQueue}
-            disabled={!canSubmit}
-            className="flex items-center justify-center gap-2 px-5 py-3 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black disabled:opacity-40 disabled:cursor-not-allowed transition-colors border-b border-black lg:border-b-0 lg:border-r lg:py-2"
-          >
-            {submitting && submitAction === 'queue' ? (
-              <><Loader2 className="w-3 h-3 animate-spin" /> Saving</>
-            ) : (
-              'Add to Queue'
-            )}
-          </button>
-          <button
             onClick={handleProcessNow}
             disabled={!canSubmit}
             className="flex items-center justify-center gap-2 px-5 py-3 bg-black text-white text-[10px] font-semibold uppercase tracking-widest hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors lg:py-2"
           >
-            {submitting && submitAction === 'process' ? (
+            {submitting ? (
               <><Loader2 className="w-3 h-3 animate-spin" /> Processing</>
             ) : (
               'Process Now'
