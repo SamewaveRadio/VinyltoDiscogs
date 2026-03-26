@@ -61,6 +61,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
+    await serviceClient
+      .from("records")
+      .update({ status: "queued" })
+      .eq("id", record_id);
+
     const workerUrl = `${supabaseUrl}/functions/v1/process-record`;
     EdgeRuntime.waitUntil(
       fetch(workerUrl, {
