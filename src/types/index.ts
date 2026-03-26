@@ -22,6 +22,7 @@ export interface VinylRecord {
   selected_release_id: string | null;
   selected_release_title: string | null;
   selected_release_score: number | null;
+  processing_step: string | null;
   error_message: string | null;
   created_at: string;
   updated_at: string;

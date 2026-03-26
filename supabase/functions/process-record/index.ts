@@ -150,7 +150,7 @@ async function failRecord(
   );
   const { error } = await supabase
     .from("records")
-    .update({ status: "failed", error_message: errorMessage })
+    .update({ status: "failed", error_message: errorMessage, processing_step: null })
     .eq("id", recordId);
   if (error) {
     console.error(
@@ -194,7 +194,7 @@ Deno.serve(async (req: Request) => {
   {
     const { error } = await supabase
       .from("records")
-      .update({ status: "processing" })
+      .update({ status: "processing", processing_step: "extracting" })
       .eq("id", recordId);
     if (error) {
       const msg = `Failed to set processing status: ${error.message}`;
@@ -404,6 +404,17 @@ Focus on the record labels (sides A and B) for catalog number and label informat
     );
   }
 
+  // --- Update step to searching ---
+  {
+    const { error } = await supabase
+      .from("records")
+      .update({ processing_step: "searching" })
+      .eq("id", recordId);
+    if (error) {
+      console.error(`[process-record] Failed to update processing_step to searching: ${error.message}`);
+    }
+  }
+
   // --- Step 4: Discogs search ---
   console.log(
     `[process-record] Starting Discogs search record=${recordId}`
@@ -468,6 +479,17 @@ Focus on the record labels (sides A and B) for catalog number and label informat
     const msg = err instanceof Error ? err.message : String(err);
     await failRecord(supabase, recordId, `Discogs search failed: ${msg}`);
     return errorResponse(`Discogs search failed: ${msg}`);
+  }
+
+  // --- Update step to ranking ---
+  {
+    const { error } = await supabase
+      .from("records")
+      .update({ processing_step: "ranking" })
+      .eq("id", recordId);
+    if (error) {
+      console.error(`[process-record] Failed to update processing_step to ranking: ${error.message}`);
+    }
   }
 
   // --- Step 5: Text-only ranking (visual ranking temporarily disabled) ---
@@ -560,7 +582,7 @@ Focus on the record labels (sides A and B) for catalog number and label informat
 
   const { error: finalError } = await supabase
     .from("records")
-    .update({ status: finalStatus, error_message: errorMsg })
+    .update({ status: finalStatus, error_message: errorMsg, processing_step: null })
     .eq("id", recordId);
 
   if (finalError) {

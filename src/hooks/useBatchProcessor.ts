@@ -57,11 +57,6 @@ export function useBatchProcessor() {
       }));
 
       try {
-        await supabase
-          .from('records')
-          .update({ status: 'processing' })
-          .eq('id', recordId);
-
         const { error: fnError } = await supabase.functions.invoke('process-record', {
           body: { record_id: recordId },
         });

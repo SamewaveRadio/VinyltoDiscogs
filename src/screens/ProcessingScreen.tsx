@@ -25,10 +25,19 @@ const STEPS: Step[] = [
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
 
-function statusToSteps(recordStatus: RecordStatus): Record<string, StepStatus> {
+function statusToSteps(
+  recordStatus: RecordStatus,
+  processingStep: string | null
+): Record<string, StepStatus> {
   switch (recordStatus) {
-    case 'processing':
-      return { process: 'done', extract: 'active', search: 'pending', rank: 'pending' };
+    case 'processing': {
+      const stepMap: Record<string, Record<string, StepStatus>> = {
+        extracting: { process: 'done', extract: 'active', search: 'pending', rank: 'pending' },
+        searching:  { process: 'done', extract: 'done',   search: 'active', rank: 'pending' },
+        ranking:    { process: 'done', extract: 'done',   search: 'done',   rank: 'active' },
+      };
+      return stepMap[processingStep ?? ''] ?? { process: 'done', extract: 'active', search: 'pending', rank: 'pending' };
+    }
     case 'matched':
     case 'needs_review':
     case 'added':
@@ -43,7 +52,7 @@ function statusToSteps(recordStatus: RecordStatus): Record<string, StepStatus> {
 export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScreenProps) {
   const [photos, setPhotos] = useState<RecordPhoto[]>([]);
   const [stepStatuses, setStepStatuses] = useState<Record<string, StepStatus>>(
-    statusToSteps('processing')
+    statusToSteps('processing', 'extracting')
   );
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -51,6 +60,9 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const navigatedRef = useRef(false);
+  const lastChangeRef = useRef<number>(Date.now());
+  const lastStepRef = useRef<string | null>(null);
+  const STUCK_TIMEOUT_MS = 90_000;
 
   useEffect(() => {
     supabase
@@ -63,14 +75,36 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
   const checkStatus = useCallback(async () => {
     const { data: record } = await supabase
       .from('records')
-      .select('status, error_message')
+      .select('status, error_message, processing_step')
       .eq('id', recordId)
       .maybeSingle();
 
     if (!record) return;
 
     const status = record.status as RecordStatus;
-    setStepStatuses(statusToSteps(status));
+    const step = record.processing_step as string | null;
+
+    setStepStatuses(statusToSteps(status, step));
+
+    if (status === 'processing') {
+      if (step !== lastStepRef.current) {
+        lastStepRef.current = step;
+        lastChangeRef.current = Date.now();
+      } else if (Date.now() - lastChangeRef.current > STUCK_TIMEOUT_MS) {
+        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+        setError('Processing timed out. The record appears to be stuck. Please try again.');
+        setStepStatuses(prev => {
+          const active = Object.entries(prev).find(([, v]) => v === 'active');
+          if (!active) return { ...prev, extract: 'error' };
+          return { ...prev, [active[0]]: 'error' };
+        });
+        await supabase
+          .from('records')
+          .update({ status: 'failed', error_message: 'Processing timed out (client-side)', processing_step: null })
+          .eq('id', recordId);
+        return;
+      }
+    }
 
     if (status === 'matched' || status === 'needs_review') {
       if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
