@@ -1,8 +1,8 @@
 import { ReactNode } from 'react';
-import { LayoutGrid, Upload, GitMerge, AlertTriangle, Disc, LogOut } from 'lucide-react';
+import { LayoutGrid, Upload, Disc, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
+type Screen = 'dashboard' | 'upload' | 'processing' | 'settings';
 
 interface LayoutProps {
   children: ReactNode;
@@ -11,11 +11,9 @@ interface LayoutProps {
 }
 
 const NAV_ITEMS: { screen: Screen; label: string; icon: React.ElementType }[] = [
-  { screen: 'dashboard',    label: 'Queue',    icon: LayoutGrid },
-  { screen: 'upload',       label: 'New',      icon: Upload },
-  { screen: 'match-review', label: 'Matches',  icon: GitMerge },
-  { screen: 'needs-review', label: 'Review',   icon: AlertTriangle },
-  { screen: 'settings',     label: 'Discogs',  icon: Disc },
+  { screen: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
+  { screen: 'upload',    label: 'New',       icon: Upload },
+  { screen: 'settings',  label: 'Discogs',   icon: Disc },
 ];
 
 export default function Layout({ children, currentScreen, onNavigate }: LayoutProps) {

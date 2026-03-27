@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { PhotoType } from '../types';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
+type Screen = 'dashboard' | 'upload' | 'processing' | 'settings';
 
 interface NewRecordUploadProps {
   onNavigate: (screen: Screen, recordId?: string) => void;

@@ -7,22 +7,19 @@ import { supabase } from '../lib/supabase';
 import { VinylRecord, DiscogsCandidate, RecordPhoto } from '../types';
 import ConfidenceBadge, { getConfidenceTier, LikelihoodBadge } from './ConfidenceBadge';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
-
 interface MatchDetailViewProps {
   record: VinylRecord;
   candidates: DiscogsCandidate[];
   photos: RecordPhoto[];
   setCandidates: (c: DiscogsCandidate[]) => void;
   setSelectedRecord: (r: VinylRecord | null) => void;
-  onRecordAdded: (record: VinylRecord, candidate: DiscogsCandidate) => void;
-  onRecordRemoved: (recordId: string) => void;
-  onNavigate: (screen: Screen, recordId?: string) => void;
+  onRecordUpdated: (record: VinylRecord, candidate?: DiscogsCandidate) => void;
+  onClose: () => void;
 }
 
 export default function MatchDetailView({
   record, candidates, photos, setCandidates, setSelectedRecord,
-  onRecordAdded, onRecordRemoved, onNavigate,
+  onRecordUpdated, onClose,
 }: MatchDetailViewProps) {
   const [chosenCandidateId, setChosenCandidateId] = useState<string | null>(() => {
     const preSelected = candidates.find(c => c.is_selected);
@@ -77,7 +74,7 @@ export default function MatchDetailView({
     }
 
     setAdding(false);
-    onRecordAdded(record, candidate);
+    onRecordUpdated({ ...record, status: 'added' }, candidate);
   };
 
   const handleConfirmOnly = async () => {
@@ -94,13 +91,12 @@ export default function MatchDetailView({
       selected_release_score: candidate.visual_score ?? candidate.score,
     }).eq('id', record.id);
 
-    onRecordAdded(record, candidate);
+    onRecordUpdated({ ...record, status: 'added' }, candidate);
   };
 
   const handleSendToReview = async () => {
     await supabase.from('records').update({ status: 'needs_review' }).eq('id', record.id);
-    onRecordRemoved(record.id);
-    onNavigate('needs-review', record.id);
+    onRecordUpdated({ ...record, status: 'needs_review' });
   };
 
   const handleRetrySearch = async () => {
@@ -161,7 +157,7 @@ export default function MatchDetailView({
   return (
     <div className="flex flex-col">
       <div className="border-b border-black px-4 py-3 flex items-center gap-3 lg:px-8 lg:py-4 lg:gap-4">
-        <button onClick={() => setSelectedRecord(null)} className="text-neutral-400 hover:text-black transition-colors">
+        <button onClick={onClose} className="text-neutral-400 hover:text-black transition-colors">
           <ArrowLeft className="w-4 h-4" />
         </button>
         <div className="flex items-baseline gap-2 min-w-0 flex-1 lg:gap-4">

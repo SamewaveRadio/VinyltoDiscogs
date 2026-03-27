@@ -3,7 +3,7 @@ import { Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { RecordPhoto, RecordStatus } from '../types';
 
-type Screen = 'dashboard' | 'upload' | 'processing' | 'match-review' | 'needs-review' | 'settings';
+type Screen = 'dashboard' | 'upload' | 'processing' | 'settings';
 
 interface ProcessingScreenProps {
   recordId: string;
@@ -114,8 +114,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
         setFinalStatus(status === 'matched' ? 'matched' : 'needs_review');
         setDone(true);
         setTimeout(() => {
-          if (status === 'matched') onNavigate('match-review', recordId);
-          else onNavigate('needs-review', recordId);
+          onNavigate('dashboard', recordId);
         }, 1200);
       }
     } else if (status === 'failed') {
@@ -235,7 +234,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   onClick={() => onNavigate('dashboard')}
                   className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-neutral-500 hover:bg-neutral-100 hover:text-black transition-colors border-b border-black sm:border-b-0 sm:border-r sm:py-2"
                 >
-                  Back to Queue
+                  Dashboard
                 </button>
                 <button
                   onClick={() => onNavigate('upload')}
@@ -244,7 +243,7 @@ export default function ProcessingScreen({ recordId, onNavigate }: ProcessingScr
                   Scan Next
                 </button>
                 <button
-                  onClick={() => onNavigate('needs-review', recordId)}
+                  onClick={() => onNavigate('dashboard', recordId)}
                   className="flex-1 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-black hover:bg-neutral-100 transition-colors sm:py-2"
                 >
                   Manual Review
